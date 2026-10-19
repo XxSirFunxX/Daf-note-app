@@ -1,0 +1,103 @@
+name: Build and Release Debug APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify and Prepare Release Artifacts
+        run: |
+          set -e
+          APK_SOURCE="app/build/outputs/apk/debug/app-debug.apk"
+          ARTIFACT_DIR="release-artifacts"
+          TARGET_APK="$ARTIFACT_DIR/app-debug.apk"
+          TARGET_CHECKSUM="$ARTIFACT_DIR/app-debug.apk.sha256"
+
+          echo "Checking APK existence..."
+          if [ ! -s "$APK_SOURCE" ]; then
+            echo "Error: Generated APK does not exist or is empty at $APK_SOURCE" >&2
+            exit 1
+          fi
+
+          echo "Verifying ZIP integrity..."
+          unzip -t "$APK_SOURCE" > /dev/null
+
+          mkdir -p "$ARTIFACT_DIR"
+          cp "$APK_SOURCE" "$TARGET_APK"
+
+          echo "Verifying package name..."
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/aapt2" ]; then
+            PKG_NAME=$("$BUILD_TOOLS_DIR/aapt2" dump packagename "$TARGET_APK")
+            echo "Detected Package Name: $PKG_NAME"
+            if [ "$PKG_NAME" != "com.aistudio.chaharkhat.notnegar" ]; then
+              echo "Error: Unexpected package name $PKG_NAME" >&2
+              exit 1
+            fi
+          fi
+
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
+            echo "Verifying APK signature..."
+            "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$TARGET_APK"
+          fi
+
+          echo "Calculating SHA-256 checksum..."
+          cd "$ARTIFACT_DIR"
+          sha256sum app-debug.apk > app-debug.apk.sha256
+          cd - > /dev/null
+
+          echo "Generated SHA-256 Checksum:"
+          cat "$TARGET_CHECKSUM"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}.${{ github.run_attempt }}
+          name: "Release v${{ github.run_number }}.${{ github.run_attempt }}"
+          body: |
+            ### Automated Debug Build
+            - **Commit:** `${{ github.sha }}`
+            - **Branch:** `${{ github.ref_name }}`
+            - **Build Run:** `${{ github.run_number }}` (Attempt `${{ github.run_attempt }}`)
+            - **Direct Download Link:** `https://github.com/${{ github.repository }}/releases/latest/download/app-debug.apk`
+
+            #### SHA-256 Checksum
+            ```
+            ${{ hashFiles('release-artifacts/app-debug.apk') }}  app-debug.apk
+            ```
+          files: |
+            release-artifacts/app-debug.apk
+            release-artifacts/app-debug.apk.sha256
+          make_latest: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
