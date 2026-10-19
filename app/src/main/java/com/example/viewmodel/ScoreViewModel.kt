@@ -1,0 +1,660 @@
+package com.example.viewmodel
+
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.data.AppDatabase
+import com.example.data.CustomSymbolEntity
+import com.example.data.FolderEntity
+import com.example.data.ScoreRepository
+import com.example.editor.UndoRedoManager
+import com.example.io.ImportResult
+import com.example.io.ScoreExporter
+import com.example.io.ScoreImporter
+import com.example.model.PaperSize
+import com.example.model.ScorePage
+import com.example.model.ScoreProject
+import com.example.model.ScoreSymbol
+import com.example.model.StaffSnapper
+import com.example.model.SymbolCategory
+import com.example.model.SymbolType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.io.File
+
+sealed class EditorScreen {
+    object ProjectsList : EditorScreen()
+    object ScoreEditor : EditorScreen()
+    object PageManager : EditorScreen()
+    object PageSettings : EditorScreen()
+    object ExportDialog : EditorScreen()
+    object ImportDialog : EditorScreen()
+    object DriveSyncDialog : EditorScreen()
+    object CustomSymbolsManager : EditorScreen()
+}
+
+data class EditorUiState(
+    val currentScreen: EditorScreen = EditorScreen.ProjectsList,
+    val currentProject: ScoreProject? = null,
+    val projectsList: List<ScoreProject> = emptyList(),
+    val foldersList: List<FolderEntity> = emptyList(),
+    val customSymbolsList: List<CustomSymbolEntity> = emptyList(),
+    val selectedSymbolIds: Set<String> = emptySet(),
+    val activePaletteSymbol: SymbolType? = SymbolType.NOTE_QUARTER,
+    val activePaletteCategory: SymbolCategory = SymbolCategory.NOTES,
+    val isSnapMode: Boolean = true,
+    val isMultiSelectMode: Boolean = false,
+    val showGuides: Boolean = true,
+    val highlightLine4: Boolean = true,
+    val zoomScale: Float = 1.0f,
+    val panOffsetX: Float = 0f,
+    val panOffsetY: Float = 0f,
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val notificationMessage: String? = null,
+    val referenceImageUri: String? = null,
+    val showReferenceBackdrop: Boolean = false,
+    val isSaving: Boolean = false
+)
+
+class ScoreViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository: ScoreRepository
+    private val undoManager = UndoRedoManager()
+
+    private val _uiState = MutableStateFlow(EditorUiState())
+    val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
+
+    init {
+        val db = AppDatabase.getInstance(application)
+        repository = ScoreRepository(db.projectDao())
+
+        viewModelScope.launch {
+            repository.allProjects.collectLatest { list ->
+                if (list.isEmpty()) {
+                    // Seed initial realistic starter sample
+                    val sample = repository.createDefaultStarterProject()
+                    repository.saveProject(sample)
+                } else {
+                    _uiState.update { it.copy(projectsList = list) }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.allFolders.collectLatest { folders ->
+                _uiState.update { it.copy(foldersList = folders) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.allCustomSymbols.collectLatest { custom ->
+                _uiState.update { it.copy(customSymbolsList = custom) }
+            }
+        }
+    }
+
+    // --- NAVIGATION ---
+
+    fun navigateTo(screen: EditorScreen) {
+        _uiState.update { it.copy(currentScreen = screen) }
+    }
+
+    fun openProject(project: ScoreProject) {
+        undoManager.clear()
+        _uiState.update {
+            it.copy(
+                currentProject = project,
+                currentScreen = EditorScreen.ScoreEditor,
+                selectedSymbolIds = emptySet(),
+                canUndo = false,
+                canRedo = false,
+                zoomScale = 1.0f,
+                panOffsetX = 0f,
+                panOffsetY = 0f
+            )
+        }
+    }
+
+    fun createNewProject(title: String = "قطعه جدید") {
+        val newProj = ScoreProject(
+            title = title,
+            pages = listOf(ScorePage(title = title))
+        )
+        viewModelScope.launch {
+            repository.saveProject(newProj)
+            openProject(newProj)
+        }
+    }
+
+    fun duplicateProject(project: ScoreProject) {
+        val copy = project.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            title = "${project.title} (کپی)",
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.saveProject(copy)
+            showNotification("پروژه با موفقیت کپی شد")
+        }
+    }
+
+    fun deleteProject(project: ScoreProject) {
+        viewModelScope.launch {
+            repository.deleteProject(project)
+            if (_uiState.value.currentProject?.id == project.id) {
+                _uiState.update { it.copy(currentProject = null, currentScreen = EditorScreen.ProjectsList) }
+            }
+            showNotification("پروژه حذف شد")
+        }
+    }
+
+    // --- SELECTION & MODES ---
+
+    fun selectPaletteSymbol(type: SymbolType) {
+        _uiState.update {
+            it.copy(
+                activePaletteSymbol = type,
+                activePaletteCategory = type.defaultCategory
+            )
+        }
+    }
+
+    fun selectCategory(category: SymbolCategory) {
+        _uiState.update { it.copy(activePaletteCategory = category) }
+    }
+
+    fun toggleSnapMode() {
+        _uiState.update { it.copy(isSnapMode = !it.isSnapMode) }
+    }
+
+    fun toggleMultiSelectMode() {
+        _uiState.update { it.copy(isMultiSelectMode = !it.isMultiSelectMode) }
+    }
+
+    fun toggleGuides() {
+        _uiState.update { it.copy(showGuides = !it.showGuides) }
+    }
+
+    fun toggleLine4Highlight() {
+        _uiState.update { it.copy(highlightLine4 = !it.highlightLine4) }
+    }
+
+    fun setZoomAndPan(zoom: Float, panX: Float, panY: Float) {
+        _uiState.update {
+            it.copy(
+                zoomScale = zoom.coerceIn(0.5f, 3.5f),
+                panOffsetX = panX,
+                panOffsetY = panY
+            )
+        }
+    }
+
+    fun resetZoom() {
+        _uiState.update { it.copy(zoomScale = 1.0f, panOffsetX = 0f, panOffsetY = 0f) }
+    }
+
+    // --- CANVAS TAP & SYMBOL INTERACTION ---
+
+    /**
+     * Called when the user taps on the score sheet.
+     * Can select an existing symbol or place the currently active palette symbol.
+     */
+    fun onCanvasTap(logicalX: Float, logicalY: Float) {
+        val project = _uiState.value.currentProject ?: return
+        val page = project.activePage
+        val baseSpacing = page.lineSpacing
+
+        // Check if user tapped an existing symbol
+        val hitSymbol = page.symbols.lastOrNull { sym ->
+            val (hw, hh) = sym.getVisualBounds(baseSpacing)
+            val left = sym.x - hw - 8f
+            val right = sym.x + hw + 8f
+            val top = sym.y - hh - 8f
+            val bottom = sym.y + hh + 8f
+            logicalX in left..right && logicalY in top..bottom
+        }
+
+        if (hitSymbol != null) {
+            if (_uiState.value.isMultiSelectMode) {
+                // Toggle selection
+                val current = _uiState.value.selectedSymbolIds.toMutableSet()
+                if (current.contains(hitSymbol.id)) {
+                    current.remove(hitSymbol.id)
+                } else {
+                    current.add(hitSymbol.id)
+                }
+                _uiState.update { it.copy(selectedSymbolIds = current) }
+            } else {
+                _uiState.update { it.copy(selectedSymbolIds = setOf(hitSymbol.id)) }
+            }
+            return
+        }
+
+        // Tapped empty space
+        if (_uiState.value.selectedSymbolIds.isNotEmpty() && _uiState.value.activePaletteSymbol == null) {
+            // Deselect
+            _uiState.update { it.copy(selectedSymbolIds = emptySet()) }
+            return
+        }
+
+        // Place new symbol from active palette
+        val paletteSymbol = _uiState.value.activePaletteSymbol ?: return
+        placeSymbolAt(logicalX, logicalY, paletteSymbol)
+    }
+
+    fun placeSymbolAt(rawX: Float, rawY: Float, type: SymbolType) {
+        val project = _uiState.value.currentProject ?: return
+        val page = project.activePage
+        val staves = page.generateStaves()
+        val isRingSound = type.isRingSound || type.defaultCategory == SymbolCategory.RING_SOUNDS
+
+        // Strict line 4 constraint for ring sounds!
+        val (finalX, finalY) = StaffSnapper.calculatePosition(
+            candidateX = rawX,
+            candidateY = rawY,
+            isRingSound = isRingSound,
+            isSnapMode = _uiState.value.isSnapMode,
+            staves = staves
+        )
+
+        recordUndo(page.symbols)
+
+        val newSymbol = ScoreSymbol(
+            type = type,
+            category = type.defaultCategory,
+            name = type.defaultTitleFa,
+            x = finalX,
+            y = finalY,
+            isRingSound = isRingSound
+        )
+
+        val updatedSymbols = page.symbols + newSymbol
+        updateActivePageSymbols(updatedSymbols)
+        _uiState.update { it.copy(selectedSymbolIds = setOf(newSymbol.id)) }
+    }
+
+    // --- SYMBOL MANIPULATION (DRAG, RESIZE, FLIP STEM, DELETE, DUPLICATE) ---
+
+    fun onSymbolDrag(deltaX: Float, deltaY: Float) {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) return
+
+        val page = project.activePage
+        val staves = page.generateStaves()
+
+        val updatedSymbols = page.symbols.map { sym ->
+            if (selectedIds.contains(sym.id)) {
+                val candidateX = sym.x + deltaX
+                val candidateY = sym.y + deltaY
+
+                val (fx, fy) = StaffSnapper.calculatePosition(
+                    candidateX = candidateX,
+                    candidateY = candidateY,
+                    isRingSound = sym.isRingSound,
+                    isSnapMode = _uiState.value.isSnapMode,
+                    staves = staves
+                )
+                sym.copy(x = fx, y = fy)
+            } else {
+                sym
+            }
+        }
+
+        updateActivePageSymbols(updatedSymbols, recordHistory = false)
+    }
+
+    fun onSymbolDragFinished() {
+        val project = _uiState.value.currentProject ?: return
+        recordUndo(project.activePage.symbols)
+        triggerAutoSave()
+    }
+
+    fun resizeSelected(scaleMultiplier: Float) {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) return
+
+        val page = project.activePage
+        recordUndo(page.symbols)
+
+        val updated = page.symbols.map { sym ->
+            if (selectedIds.contains(sym.id)) {
+                val newScale = (sym.scale * scaleMultiplier).coerceIn(0.5f, 2.5f)
+                sym.copy(scale = newScale)
+            } else sym
+        }
+        updateActivePageSymbols(updated)
+    }
+
+    fun flipStemSelected() {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) return
+
+        val page = project.activePage
+        recordUndo(page.symbols)
+
+        val updated = page.symbols.map { sym ->
+            if (selectedIds.contains(sym.id)) {
+                sym.copy(isStemUp = !sym.isStemUp)
+            } else sym
+        }
+        updateActivePageSymbols(updated)
+    }
+
+    fun duplicateSelected() {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) return
+
+        val page = project.activePage
+        recordUndo(page.symbols)
+
+        val newClones = mutableListOf<ScoreSymbol>()
+        val newSelectedIds = mutableSetOf<String>()
+
+        for (sym in page.symbols) {
+            if (selectedIds.contains(sym.id)) {
+                val clone = sym.copy(
+                    id = java.util.UUID.randomUUID().toString(),
+                    x = sym.x + 25f,
+                    // Ring sound Y stays strictly clamped to line 4!
+                    y = if (sym.isRingSound) sym.y else sym.y + 10f
+                )
+                newClones.add(clone)
+                newSelectedIds.add(clone.id)
+            }
+        }
+
+        updateActivePageSymbols(page.symbols + newClones)
+        _uiState.update { it.copy(selectedSymbolIds = newSelectedIds) }
+        showNotification("نمادها تکثیر شدند")
+    }
+
+    fun deleteSelected() {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) return
+
+        val page = project.activePage
+        recordUndo(page.symbols)
+
+        val remaining = page.symbols.filterNot { selectedIds.contains(it.id) }
+        updateActivePageSymbols(remaining)
+        _uiState.update { it.copy(selectedSymbolIds = emptySet()) }
+        showNotification("نمادهای انتخاب‌شده حذف شدند")
+    }
+
+    // --- UNDO & REDO ---
+
+    private fun recordUndo(symbols: List<ScoreSymbol>) {
+        undoManager.recordState(symbols)
+        _uiState.update { it.copy(canUndo = undoManager.canUndo, canRedo = undoManager.canRedo) }
+    }
+
+    fun undo() {
+        val project = _uiState.value.currentProject ?: return
+        val previous = undoManager.undo(project.activePage.symbols) ?: return
+        updateActivePageSymbols(previous, recordHistory = false)
+        _uiState.update {
+            it.copy(
+                canUndo = undoManager.canUndo,
+                canRedo = undoManager.canRedo,
+                selectedSymbolIds = emptySet()
+            )
+        }
+        showNotification("عملیات لغو شد")
+    }
+
+    fun redo() {
+        val project = _uiState.value.currentProject ?: return
+        val next = undoManager.redo(project.activePage.symbols) ?: return
+        updateActivePageSymbols(next, recordHistory = false)
+        _uiState.update {
+            it.copy(
+                canUndo = undoManager.canUndo,
+                canRedo = undoManager.canRedo,
+                selectedSymbolIds = emptySet()
+            )
+        }
+        showNotification("عملیات مجدداً انجام شد")
+    }
+
+    // --- PAGE MANAGEMENT ---
+
+    fun addNewPage() {
+        val project = _uiState.value.currentProject ?: return
+        val templatePage = project.activePage
+        val newPage = templatePage.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            pageNumber = project.pages.size + 1,
+            symbols = emptyList()
+        )
+        val updatedProject = project.copy(
+            pages = project.pages + newPage,
+            activePageIndex = project.pages.size
+        )
+        updateProject(updatedProject)
+        undoManager.clear()
+        _uiState.update { it.copy(canUndo = false, canRedo = false, selectedSymbolIds = emptySet()) }
+        showNotification("صفحه جدید افزوده شد")
+    }
+
+    fun switchActivePage(index: Int) {
+        val project = _uiState.value.currentProject ?: return
+        if (index in project.pages.indices) {
+            undoManager.clear()
+            _uiState.update {
+                it.copy(
+                    currentProject = project.copy(activePageIndex = index),
+                    selectedSymbolIds = emptySet(),
+                    canUndo = false,
+                    canRedo = false
+                )
+            }
+        }
+    }
+
+    fun deleteCurrentPage() {
+        val project = _uiState.value.currentProject ?: return
+        if (project.pages.size <= 1) {
+            showNotification("پروژه باید حداقل دارای یک صفحه باشد")
+            return
+        }
+
+        val updatedPages = project.pages.toMutableList()
+        val removeIndex = project.activePageIndex
+        updatedPages.removeAt(removeIndex)
+
+        // Renumber pages
+        val renumbered = updatedPages.mapIndexed { idx, p -> p.copy(pageNumber = idx + 1) }
+        val newIndex = (removeIndex - 1).coerceAtLeast(0)
+
+        val updated = project.copy(pages = renumbered, activePageIndex = newIndex)
+        updateProject(updated)
+        undoManager.clear()
+        _uiState.update { it.copy(canUndo = false, canRedo = false, selectedSymbolIds = emptySet()) }
+        showNotification("صفحه حذف شد")
+    }
+
+    fun reorderPages(fromIndex: Int, toIndex: Int) {
+        val project = _uiState.value.currentProject ?: return
+        if (fromIndex !in project.pages.indices || toIndex !in project.pages.indices) return
+
+        val pages = project.pages.toMutableList()
+        val item = pages.removeAt(fromIndex)
+        pages.add(toIndex, item)
+        val renumbered = pages.mapIndexed { idx, p -> p.copy(pageNumber = idx + 1) }
+
+        updateProject(project.copy(pages = renumbered, activePageIndex = toIndex))
+    }
+
+    fun updatePageSettings(
+        paperSize: PaperSize,
+        stavesCount: Int,
+        lineSpacing: Float,
+        line4SpacingRatio: Float,
+        title: String,
+        subtitle: String,
+        lessonNumber: String
+    ) {
+        val project = _uiState.value.currentProject ?: return
+        val updatedProject = project.updateActivePage { current ->
+            current.copy(
+                paperSize = paperSize,
+                stavesCount = stavesCount.coerceIn(1, 10),
+                lineSpacing = lineSpacing.coerceIn(10f, 26f),
+                line4SpacingRatio = line4SpacingRatio.coerceIn(0.8f, 2.0f),
+                title = title,
+                subtitle = subtitle,
+                lessonNumber = lessonNumber
+            )
+        }
+        updateProject(updatedProject)
+        showNotification("تنظیمات صفحه اعمال شد")
+    }
+
+    // --- PERSISTENCE & AUTO-SAVE ---
+
+    private fun updateActivePageSymbols(symbols: List<ScoreSymbol>, recordHistory: Boolean = true) {
+        val project = _uiState.value.currentProject ?: return
+        if (recordHistory) {
+            recordUndo(project.activePage.symbols)
+        }
+        val updatedProject = project.updateActivePage { it.copy(symbols = symbols) }
+        _uiState.update { it.copy(currentProject = updatedProject) }
+        triggerAutoSave()
+    }
+
+    private fun updateProject(project: ScoreProject) {
+        _uiState.update { it.copy(currentProject = project) }
+        triggerAutoSave()
+    }
+
+    fun saveProjectExplicitly() {
+        val project = _uiState.value.currentProject ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true) }
+            repository.saveProject(project)
+            _uiState.update { it.copy(isSaving = false) }
+            showNotification("پروژه ذخیره شد")
+        }
+    }
+
+    private fun triggerAutoSave() {
+        val project = _uiState.value.currentProject ?: return
+        viewModelScope.launch {
+            repository.saveProject(project)
+        }
+    }
+
+    // --- CUSTOM SYMBOLS ---
+
+    fun createCustomSymbol(name: String, isRingSound: Boolean, vectorPath: String?) {
+        viewModelScope.launch {
+            repository.addCustomSymbol(name, isRingSound, vectorPath)
+            showNotification("نماد سفارشی '$name' با موفقیت افزوده شد")
+        }
+    }
+
+    fun removeCustomSymbol(id: String) {
+        viewModelScope.launch {
+            repository.deleteCustomSymbol(id)
+            showNotification("نماد سفارشی حذف شد")
+        }
+    }
+
+    // --- IMPORT & EXPORT ACTIONS ---
+
+    fun exportToPdf(context: Context) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val file = ScoreExporter.exportToPdf(context, project)
+            ScoreExporter.shareFile(context, file, "application/pdf", "اشتراک‌گذاری فایل PDF نت‌نویسی")
+            showNotification("فایل PDF با موفقیت آماده شد")
+        } catch (e: Exception) {
+            showNotification("خطا در صدور PDF: ${e.localizedMessage}")
+        }
+    }
+
+    fun exportActivePageImage(context: Context, isPng: Boolean = true) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val file = ScoreExporter.exportPageToImage(context, project.activePage, isPng = isPng)
+            val mime = if (isPng) "image/png" else "image/jpeg"
+            ScoreExporter.shareFile(context, file, mime, "اشتراک‌گذاری تصویر صفحه")
+            showNotification("تصویر صفحه با کیفیت بالا ایجاد شد")
+        } catch (e: Exception) {
+            showNotification("خطا در ایجاد تصویر: ${e.localizedMessage}")
+        }
+    }
+
+    fun exportProjectFile(context: Context) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val file = ScoreExporter.exportProjectFile(context, project)
+            ScoreExporter.shareFile(context, file, "application/json", "ارسال فایل قابل ویرایش پروژه")
+            showNotification("فایل پروژه با موفقیت صادر شد")
+        } catch (e: Exception) {
+            showNotification("خطا در صدور پروژه: ${e.localizedMessage}")
+        }
+    }
+
+    fun importProjectContent(jsonOrXml: String) {
+        if (jsonOrXml.contains("score-partwise") || jsonOrXml.contains("<?xml")) {
+            val res = ScoreImporter.parseMusicXml(jsonOrXml)
+            if (res.isSuccess && res.data != null) {
+                viewModelScope.launch {
+                    repository.saveProject(res.data)
+                    openProject(res.data)
+                }
+                val incomp = res.report?.incompatibleElements?.joinToString("، ") ?: ""
+                val msg = "نت‌های MusicXML وارد شدند. (${res.report?.importedNotesCount} نت)" +
+                        if (incomp.isNotBlank()) "\nعناصر تطبیق‌یافته: $incomp" else ""
+                showNotification(msg)
+            } else {
+                showNotification(res.errorMessage ?: "خطا در خواندن MusicXML")
+            }
+        } else {
+            val res = ScoreImporter.parseProjectJson(jsonOrXml)
+            if (res.isSuccess && res.data != null) {
+                viewModelScope.launch {
+                    repository.saveProject(res.data)
+                    openProject(res.data)
+                }
+                showNotification("پروژه با موفقیت بارگذاری شد")
+            } else {
+                showNotification(res.errorMessage ?: "فرمت فایل نامعتبر است")
+            }
+        }
+    }
+
+    fun setReferenceImageUri(uri: String?) {
+        _uiState.update {
+            it.copy(
+                referenceImageUri = uri,
+                showReferenceBackdrop = uri != null
+            )
+        }
+    }
+
+    fun toggleReferenceBackdrop() {
+        _uiState.update { it.copy(showReferenceBackdrop = !it.showReferenceBackdrop) }
+    }
+
+    fun showNotification(msg: String) {
+        _uiState.update { it.copy(notificationMessage = msg) }
+    }
+
+    fun clearNotification() {
+        _uiState.update { it.copy(notificationMessage = null) }
+    }
+}

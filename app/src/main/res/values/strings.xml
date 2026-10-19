@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">نت‌نگار چهارخطی</string>
+    <string name="title_projects">پروژه‌های نت‌نویسی</string>
+    <string name="btn_new_project">پروژه جدید</string>
+    <string name="btn_save">ذخیره</string>
+    <string name="btn_export">خروجی</string>
+    <string name="btn_undo">بازگشت</string>
+    <string name="btn_redo">انجام مجدد</string>
+    <string name="btn_settings">تنظیمات</string>
+</resources>

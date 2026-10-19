@@ -1,0 +1,6 @@
+{
+  "name": "نت‌نگار چهارخطی",
+  "description": "ویرایشگر تخصصی و هوشمند نت موسیقی روی حامل چهارخطی همراه با قوانین صدای حلقه‌ها، مدیریت صفحات و خروجی چاپی",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
