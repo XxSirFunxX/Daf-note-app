@@ -21,11 +21,34 @@ data class FolderEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "categories")
+data class CategoryEntity(
+    @PrimaryKey val id: String,
+    val titleFa: String,
+    val sortOrder: Int = 0,
+    val isDefault: Boolean = false
+)
+
+@Entity(tableName = "note_definitions")
+data class NoteDefinitionEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val symbolTypeName: String,
+    val categoryId: String,
+    val durationValue: String = "1/4", // e.g. "1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64"
+    val isRingSound: Boolean = false,
+    val isDefault: Boolean = false,
+    val isHidden: Boolean = false,
+    val imagePath: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 @Entity(tableName = "custom_symbols")
 data class CustomSymbolEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val isRingSound: Boolean,
+    val categoryId: String = "CUSTOM",
+    val isRingSound: Boolean = false,
     val vectorData: String? = null,
     val imagePath: String? = null,
     val createdAt: Long = System.currentTimeMillis()

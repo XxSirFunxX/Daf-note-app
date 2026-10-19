@@ -15,7 +15,9 @@ data class ScoreSymbol(
     val isRingSound: Boolean = (category == SymbolCategory.RING_SOUNDS || type.isRingSound),
     val textValue: String? = null,
     val customData: String? = null,
-    val colorHex: String = "#1E1C1A"
+    val colorHex: String = "#1E1C1A",
+    val imagePath: String? = null,
+    val durationValue: String? = null
 ) {
     /**
      * Approximate bounding box half-width and half-height for hit-testing and selection box.
@@ -30,7 +32,7 @@ data class ScoreSymbol(
             SymbolCategory.RING_SOUNDS -> (18f * s) to (18f * s)
             SymbolCategory.TECHNIQUES -> (14f * s) to (14f * s)
             SymbolCategory.TEMPO_TEXT -> (36f * s) to (16f * s)
-            SymbolCategory.CUSTOM -> (20f * s) to (20f * s)
+            SymbolCategory.CUSTOM -> (24f * s) to (24f * s)
         }
     }
 }

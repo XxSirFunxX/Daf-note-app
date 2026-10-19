@@ -36,10 +36,12 @@ import com.example.ui.components.EditorTopBar
 import com.example.ui.components.FloatingQuickToolbar
 import com.example.ui.components.ScoreCanvasView
 import com.example.ui.components.SymbolLibrarySheet
-import com.example.ui.dialogs.CustomSymbolDialog
+import com.example.ui.dialogs.CategoryManagerDialog
+import com.example.ui.dialogs.CustomSymbolsManagerDialog
 import com.example.ui.dialogs.DriveSyncDialog
 import com.example.ui.dialogs.ExportDialog
 import com.example.ui.dialogs.ImportDialog
+import com.example.ui.dialogs.NoteDefinitionsManagerDialog
 import com.example.ui.dialogs.PageManagerDialog
 import com.example.ui.dialogs.PageSettingsDialog
 import com.example.viewmodel.EditorUiState
@@ -66,6 +68,8 @@ fun ScoreEditorScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var showDriveSyncDialog by remember { mutableStateOf(false) }
     var showCustomSymbolsDialog by remember { mutableStateOf(false) }
+    var showCategoryManagerDialog by remember { mutableStateOf(false) }
+    var showNoteManagerDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -98,10 +102,17 @@ fun ScoreEditorScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             SymbolLibrarySheet(
-                activeCategory = state.activePaletteCategory,
+                categories = state.categoriesList,
+                activeCategoryId = state.activePaletteCategoryId,
                 activeSymbol = state.activePaletteSymbol,
+                activeCustomSymbolId = state.activeCustomSymbol?.id,
+                customSymbols = state.customSymbolsList,
+                noteDefinitions = state.noteDefinitionsList,
                 onSelectCategory = { viewModel.selectCategory(it) },
                 onSelectSymbol = { viewModel.selectPaletteSymbol(it) },
+                onSelectCustomSymbol = { viewModel.selectCustomSymbol(it) },
+                onOpenNoteManager = { showNoteManagerDialog = true },
+                onOpenCategoryManager = { showCategoryManagerDialog = true },
                 onOpenCustomManager = { showCustomSymbolsDialog = true }
             )
         },
@@ -116,6 +127,7 @@ fun ScoreEditorScreen(
             ScoreCanvasView(
                 page = project.activePage,
                 selectedSymbolIds = state.selectedSymbolIds,
+                activePaletteSymbol = state.activePaletteSymbol,
                 isSnapMode = state.isSnapMode,
                 showGuides = state.showGuides,
                 highlightLine4 = state.highlightLine4,
@@ -198,9 +210,46 @@ fun ScoreEditorScreen(
     }
 
     if (showCustomSymbolsDialog) {
-        CustomSymbolDialog(
+        CustomSymbolsManagerDialog(
+            categories = state.categoriesList,
+            customSymbols = state.customSymbolsList,
             onDismiss = { showCustomSymbolsDialog = false },
-            onCreateCustom = { name, isRing -> viewModel.createCustomSymbol(name, isRing, null) }
+            onCreateFromUri = { uri, name, catId, isRing ->
+                viewModel.createCustomSymbolFromUri(context, uri, name, catId, isRing)
+            },
+            onCreateCustom = { name, catId, isRing ->
+                viewModel.createCustomSymbol(name, catId, isRing, null)
+            },
+            onUpdateCustom = { updated ->
+                viewModel.updateCustomSymbol(updated)
+            },
+            onDeleteCustom = { id ->
+                viewModel.removeCustomSymbol(id)
+            },
+            onSelectForPlacement = { custom ->
+                viewModel.selectCustomSymbol(custom)
+            }
+        )
+    }
+
+    if (showCategoryManagerDialog) {
+        CategoryManagerDialog(
+            categories = state.categoriesList,
+            onDismiss = { showCategoryManagerDialog = false },
+            onAddCategory = { viewModel.addCategory(it) },
+            onUpdateCategory = { viewModel.updateCategory(it) },
+            onDeleteCategory = { viewModel.deleteCategorySafely(it) }
+        )
+    }
+
+    if (showNoteManagerDialog) {
+        NoteDefinitionsManagerDialog(
+            noteDefinitions = state.noteDefinitionsList,
+            categories = state.categoriesList,
+            onDismiss = { showNoteManagerDialog = false },
+            onToggleHidden = { id, hidden ->
+                viewModel.toggleNoteDefinitionHidden(id, hidden)
+            }
         )
     }
 }

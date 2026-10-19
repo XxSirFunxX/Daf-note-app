@@ -643,7 +643,20 @@ object ScoreRenderer {
     }
 
     private fun drawCustomSymbol(canvas: Canvas, symbol: ScoreSymbol) {
-        // Draw custom geometric/symbol marker with name
+        val path = symbol.imagePath
+        if (!path.isNullOrBlank()) {
+            val file = java.io.File(path)
+            if (file.exists()) {
+                val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                if (bmp != null) {
+                    val halfSize = 14f
+                    val rect = RectF(-halfSize, -halfSize, halfSize, halfSize)
+                    canvas.drawBitmap(bmp, null, rect, null)
+                    return
+                }
+            }
+        }
+        // Fallback: draw custom geometric/symbol marker with name
         val p = Paint(inkStrokePaint).apply { strokeWidth = 2f }
         canvas.drawRoundRect(-12f, -12f, 12f, 12f, 4f, 4f, p)
         val textP = Paint(Paint.ANTI_ALIAS_FLAG).apply {

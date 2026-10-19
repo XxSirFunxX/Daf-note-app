@@ -30,12 +30,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.model.ScorePage
+import com.example.model.SymbolType
 import com.example.render.ScoreRenderer
 
 @Composable
 fun ScoreCanvasView(
     page: ScorePage,
     selectedSymbolIds: Set<String>,
+    activePaletteSymbol: SymbolType?,
     isSnapMode: Boolean,
     showGuides: Boolean,
     highlightLine4: Boolean,
@@ -60,11 +62,11 @@ fun ScoreCanvasView(
         val containerWidthPx = constraints.maxWidth.toFloat()
         val containerHeightPx = constraints.maxHeight.toFloat()
 
-        // Page logical dimension
+        // Page logical dimensions
         val pageW = page.paperSize.widthPt
         val pageH = page.paperSize.heightPt
 
-        // Fit page comfortably inside available container space
+        // Fit scale inside container
         val horizontalScale = (containerWidthPx - 32f) / pageW
         val verticalScale = (containerHeightPx - 32f) / pageH
         val fitScale = minOf(horizontalScale, verticalScale).coerceAtLeast(0.1f)
@@ -75,53 +77,60 @@ fun ScoreCanvasView(
         val renderedWidthPx = pageW * fitScale
         val renderedHeightPx = pageH * fitScale
 
-        // Gesture state
+        // Helper to convert screen pointer touch into exact page logical coordinates
+        fun screenToLogical(screenX: Float, screenY: Float): Pair<Float, Float> {
+            val dx = screenX - (containerWidthPx / 2f) - panOffsetX
+            val dy = screenY - (containerHeightPx / 2f) - panOffsetY
+            val paperDx = dx / zoomScale
+            val paperDy = dy / zoomScale
+            val localX = paperDx + (renderedWidthPx / 2f)
+            val localY = paperDy + (renderedHeightPx / 2f)
+            val logicalX = (localX / renderedWidthPx) * pageW
+            val logicalY = (localY / renderedHeightPx) * pageH
+            return logicalX to logicalY
+        }
+
         var isDraggingSymbol by remember { mutableStateOf(false) }
 
         Box(
             modifier = Modifier
-                .graphicsLayer {
-                    scaleX = zoomScale
-                    scaleY = zoomScale
-                    translationX = panOffsetX
-                    translationY = panOffsetY
-                }
-                .size(renderedWidthDp, renderedHeightDp)
-                .shadow(elevation = 8.dp, shape = RoundedCornerShape(2.dp))
-                .clip(RoundedCornerShape(2.dp))
-                .background(Color(0xFFFFFDF9))
-                // 1. Gesture detector for two-finger zoom & pan
-                .pointerInput(page.id) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        val newZoom = (zoomScale * zoom).coerceIn(0.6f, 3.5f)
-                        val newPanX = panOffsetX + pan.x
-                        val newPanY = panOffsetY + pan.y
+                .fillMaxSize()
+                // 1. Two-finger Pinch to Zoom & Pan
+                .pointerInput(page.id, zoomScale, panOffsetX, panOffsetY) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        val oldZoom = zoomScale
+                        val newZoom = (oldZoom * zoom).coerceIn(0.5f, 4.0f)
+                        val zoomFactor = newZoom / oldZoom
+
+                        // Zoom centered on the touch centroid
+                        val newPanX = (panOffsetX + pan.x) * zoomFactor + (1f - zoomFactor) * (centroid.x - containerWidthPx / 2f)
+                        val newPanY = (panOffsetY + pan.y) * zoomFactor + (1f - zoomFactor) * (centroid.y - containerHeightPx / 2f)
+
                         onZoomAndPanChange(newZoom, newPanX, newPanY)
                     }
                 }
-                // 2. Gesture detector for symbol dragging
-                .pointerInput(page.id, selectedSymbolIds) {
+                // 2. Single-finger drag (symbol drag or canvas pan)
+                .pointerInput(page.id, selectedSymbolIds, activePaletteSymbol, zoomScale, panOffsetX, panOffsetY) {
                     detectDragGestures(
                         onDragStart = { offset ->
-                            val logicalX = (offset.x / renderedWidthPx) * pageW
-                            val logicalY = (offset.y / renderedHeightPx) * pageH
-
-                            // Check if tapped near an existing symbol
+                            val (lx, ly) = screenToLogical(offset.x, offset.y)
                             val hit = page.symbols.any { sym ->
                                 val (hw, hh) = sym.getVisualBounds(page.lineSpacing)
-                                logicalX in (sym.x - hw - 10f)..(sym.x + hw + 10f) &&
-                                        logicalY in (sym.y - hh - 10f)..(sym.y + hh + 10f)
+                                lx in (sym.x - hw - 12f)..(sym.x + hw + 12f) &&
+                                        ly in (sym.y - hh - 12f)..(sym.y + hh + 12f)
                             }
-                            if (hit) {
-                                isDraggingSymbol = true
-                            }
+                            isDraggingSymbol = hit || selectedSymbolIds.isNotEmpty()
                         },
                         onDrag = { change, dragAmount ->
-                            if (isDraggingSymbol || selectedSymbolIds.isNotEmpty()) {
-                                change.consume()
-                                val deltaLogicalX = (dragAmount.x / renderedWidthPx) * pageW
-                                val deltaLogicalY = (dragAmount.y / renderedHeightPx) * pageH
+                            change.consume()
+                            if (isDraggingSymbol && activePaletteSymbol == null) {
+                                // Dragging symbol(s) in logical coordinates
+                                val deltaLogicalX = (dragAmount.x / (renderedWidthPx * zoomScale)) * pageW
+                                val deltaLogicalY = (dragAmount.y / (renderedHeightPx * zoomScale)) * pageH
                                 onSymbolDrag(deltaLogicalX, deltaLogicalY)
+                            } else {
+                                // Panning the view
+                                onZoomAndPanChange(zoomScale, panOffsetX + dragAmount.x, panOffsetY + dragAmount.y)
                             }
                         },
                         onDragEnd = {
@@ -135,32 +144,46 @@ fun ScoreCanvasView(
                         }
                     )
                 }
-                // 3. Tap gesture detector for symbol selection or placement
-                .pointerInput(page.id) {
+                // 3. Single tap (place symbol or select existing)
+                .pointerInput(page.id, activePaletteSymbol, zoomScale, panOffsetX, panOffsetY) {
                     detectTapGestures { offset ->
-                        val logicalX = (offset.x / renderedWidthPx) * pageW
-                        val logicalY = (offset.y / renderedHeightPx) * pageH
-                        onCanvasTap(logicalX, logicalY)
+                        val (lx, ly) = screenToLogical(offset.x, offset.y)
+                        onCanvasTap(lx, ly)
                     }
-                }
-                .testTag("score_sheet_paper")
+                },
+            contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawIntoCanvas { composeCanvas ->
-                    val canvas = composeCanvas.nativeCanvas
-                    canvas.save()
-                    // Scale native canvas to match fit scale
-                    canvas.scale(fitScale, fitScale)
+            // Rendered Sheet
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        scaleX = zoomScale
+                        scaleY = zoomScale
+                        translationX = panOffsetX
+                        translationY = panOffsetY
+                    }
+                    .size(renderedWidthDp, renderedHeightDp)
+                    .shadow(elevation = 8.dp, shape = RoundedCornerShape(2.dp))
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color(0xFFFFFDF9))
+                    .testTag("score_sheet_paper")
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawIntoCanvas { composeCanvas ->
+                        val canvas = composeCanvas.nativeCanvas
+                        canvas.save()
+                        canvas.scale(fitScale, fitScale)
 
-                    ScoreRenderer.drawPage(
-                        canvas = canvas,
-                        page = page,
-                        selectedSymbolIds = selectedSymbolIds,
-                        showGuides = showGuides,
-                        highlightLine4 = highlightLine4
-                    )
+                        ScoreRenderer.drawPage(
+                            canvas = canvas,
+                            page = page,
+                            selectedSymbolIds = selectedSymbolIds,
+                            showGuides = showGuides,
+                            highlightLine4 = highlightLine4
+                        )
 
-                    canvas.restore()
+                        canvas.restore()
+                    }
                 }
             }
         }

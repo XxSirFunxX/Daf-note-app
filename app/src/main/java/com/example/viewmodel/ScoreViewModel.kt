@@ -2,11 +2,14 @@ package com.example.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.CategoryEntity
 import com.example.data.CustomSymbolEntity
 import com.example.data.FolderEntity
+import com.example.data.NoteDefinitionEntity
 import com.example.data.ScoreRepository
 import com.example.editor.UndoRedoManager
 import com.example.io.ImportResult
@@ -43,9 +46,13 @@ data class EditorUiState(
     val currentProject: ScoreProject? = null,
     val projectsList: List<ScoreProject> = emptyList(),
     val foldersList: List<FolderEntity> = emptyList(),
+    val categoriesList: List<CategoryEntity> = emptyList(),
+    val noteDefinitionsList: List<NoteDefinitionEntity> = emptyList(),
     val customSymbolsList: List<CustomSymbolEntity> = emptyList(),
     val selectedSymbolIds: Set<String> = emptySet(),
     val activePaletteSymbol: SymbolType? = SymbolType.NOTE_QUARTER,
+    val activeCustomSymbol: CustomSymbolEntity? = null,
+    val activePaletteCategoryId: String = "NOTES",
     val activePaletteCategory: SymbolCategory = SymbolCategory.NOTES,
     val isSnapMode: Boolean = true,
     val isMultiSelectMode: Boolean = false,
@@ -72,7 +79,12 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val db = AppDatabase.getInstance(application)
-        repository = ScoreRepository(db.projectDao())
+        repository = ScoreRepository(db.projectDao(), application)
+
+        viewModelScope.launch {
+            repository.ensureDefaultCategories()
+            repository.ensureDefaultNoteDefinitions()
+        }
 
         viewModelScope.launch {
             repository.allProjects.collectLatest { list ->
@@ -89,6 +101,18 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.allFolders.collectLatest { folders ->
                 _uiState.update { it.copy(foldersList = folders) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.allCategories.collectLatest { cats ->
+                _uiState.update { it.copy(categoriesList = cats) }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.allNoteDefinitions.collectLatest { defs ->
+                _uiState.update { it.copy(noteDefinitionsList = defs) }
             }
         }
 
@@ -161,13 +185,39 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 activePaletteSymbol = type,
-                activePaletteCategory = type.defaultCategory
+                activeCustomSymbol = null,
+                activePaletteCategory = type.defaultCategory,
+                activePaletteCategoryId = type.defaultCategory.name
+            )
+        }
+    }
+
+    fun selectCustomSymbol(custom: CustomSymbolEntity) {
+        _uiState.update {
+            it.copy(
+                activeCustomSymbol = custom,
+                activePaletteSymbol = null,
+                activePaletteCategoryId = custom.categoryId
+            )
+        }
+    }
+
+    fun selectCategory(categoryId: String) {
+        val catEnum = try {
+            SymbolCategory.valueOf(categoryId)
+        } catch (e: Exception) {
+            SymbolCategory.CUSTOM
+        }
+        _uiState.update {
+            it.copy(
+                activePaletteCategoryId = categoryId,
+                activePaletteCategory = catEnum
             )
         }
     }
 
     fun selectCategory(category: SymbolCategory) {
-        _uiState.update { it.copy(activePaletteCategory = category) }
+        selectCategory(category.name)
     }
 
     fun toggleSnapMode() {
@@ -238,15 +288,58 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Tapped empty space
-        if (_uiState.value.selectedSymbolIds.isNotEmpty() && _uiState.value.activePaletteSymbol == null) {
+        if (_uiState.value.selectedSymbolIds.isNotEmpty() &&
+            _uiState.value.activePaletteSymbol == null &&
+            _uiState.value.activeCustomSymbol == null
+        ) {
             // Deselect
             _uiState.update { it.copy(selectedSymbolIds = emptySet()) }
+            return
+        }
+
+        // Place new custom symbol if active
+        val customSymbol = _uiState.value.activeCustomSymbol
+        if (customSymbol != null) {
+            placeCustomSymbolAt(logicalX, logicalY, customSymbol)
             return
         }
 
         // Place new symbol from active palette
         val paletteSymbol = _uiState.value.activePaletteSymbol ?: return
         placeSymbolAt(logicalX, logicalY, paletteSymbol)
+    }
+
+    fun placeCustomSymbolAt(rawX: Float, rawY: Float, custom: CustomSymbolEntity) {
+        val project = _uiState.value.currentProject ?: return
+        val page = project.activePage
+        val staves = page.generateStaves()
+        val isRingSound = custom.isRingSound
+
+        // Strict line 4 constraint for ring sounds!
+        val (finalX, finalY) = StaffSnapper.calculatePosition(
+            candidateX = rawX,
+            candidateY = rawY,
+            isRingSound = isRingSound,
+            isSnapMode = _uiState.value.isSnapMode,
+            staves = staves
+        )
+
+        recordUndo(page.symbols)
+
+        val newSymbol = ScoreSymbol(
+            type = SymbolType.CUSTOM_SYMBOL,
+            category = SymbolCategory.CUSTOM,
+            name = custom.name,
+            x = finalX,
+            y = finalY,
+            isRingSound = isRingSound,
+            imagePath = custom.imagePath,
+            customData = custom.id
+        )
+
+        val updatedSymbols = page.symbols + newSymbol
+        updateActivePageSymbols(updatedSymbols)
+        _uiState.update { it.copy(selectedSymbolIds = setOf(newSymbol.id)) }
     }
 
     fun placeSymbolAt(rawX: Float, rawY: Float, type: SymbolType) {
@@ -558,17 +651,86 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- CUSTOM SYMBOLS ---
 
-    fun createCustomSymbol(name: String, isRingSound: Boolean, vectorPath: String?) {
+    fun createCustomSymbolFromUri(
+        context: Context,
+        imageUri: Uri,
+        name: String,
+        categoryId: String,
+        isRingSound: Boolean
+    ) {
         viewModelScope.launch {
-            repository.addCustomSymbol(name, isRingSound, vectorPath)
+            val entity = repository.addCustomSymbolFromUri(context, imageUri, name, categoryId, isRingSound)
+            if (entity != null) {
+                selectCustomSymbol(entity)
+                showNotification("نماد سفارشی '$name' با موفقیت به کتابخانه افزوده شد")
+            } else {
+                showNotification("خطا در ذخیره نماد سفارشی")
+            }
+        }
+    }
+
+    fun createCustomSymbol(
+        name: String,
+        categoryId: String = "CUSTOM",
+        isRingSound: Boolean = false,
+        vectorPath: String? = null
+    ) {
+        viewModelScope.launch {
+            val entity = repository.addCustomSymbol(name, categoryId, isRingSound, vectorPath)
+            selectCustomSymbol(entity)
             showNotification("نماد سفارشی '$name' با موفقیت افزوده شد")
+        }
+    }
+
+    fun updateCustomSymbol(symbol: CustomSymbolEntity) {
+        viewModelScope.launch {
+            repository.updateCustomSymbol(symbol)
+            if (_uiState.value.activeCustomSymbol?.id == symbol.id) {
+                _uiState.update { it.copy(activeCustomSymbol = symbol) }
+            }
+            showNotification("اطلاعات نماد سفارشی '${symbol.name}' بروزرسانی شد")
         }
     }
 
     fun removeCustomSymbol(id: String) {
         viewModelScope.launch {
             repository.deleteCustomSymbol(id)
+            if (_uiState.value.activeCustomSymbol?.id == id) {
+                _uiState.update { it.copy(activeCustomSymbol = null) }
+            }
             showNotification("نماد سفارشی حذف شد")
+        }
+    }
+
+    // --- CATEGORIES & NOTE DEFINITIONS ---
+
+    fun addCategory(titleFa: String) {
+        viewModelScope.launch {
+            repository.addCategory(titleFa)
+            showNotification("دسته‌بندی '$titleFa' افزوده شد")
+        }
+    }
+
+    fun updateCategory(category: CategoryEntity) {
+        viewModelScope.launch {
+            repository.updateCategory(category)
+            showNotification("دسته‌بندی بروزرسانی شد")
+        }
+    }
+
+    fun deleteCategorySafely(categoryId: String) {
+        viewModelScope.launch {
+            repository.deleteCategorySafely(categoryId)
+            if (_uiState.value.activePaletteCategoryId == categoryId) {
+                selectCategory("NOTES")
+            }
+            showNotification("دسته‌بندی با حفظ نمادها حذف شد")
+        }
+    }
+
+    fun toggleNoteDefinitionHidden(id: String, hidden: Boolean) {
+        viewModelScope.launch {
+            repository.hideNoteDefinition(id, hidden)
         }
     }
 

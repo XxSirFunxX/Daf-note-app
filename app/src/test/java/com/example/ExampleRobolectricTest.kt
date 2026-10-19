@@ -68,4 +68,67 @@ class ExampleRobolectricTest {
         assertTrue(imageFile.exists())
         assertTrue(imageFile.length() > 0)
     }
+
+    @Test
+    fun testCustomSymbolSerialization_preservesAllMetadata() {
+        val customSym = ScoreSymbol(
+            type = SymbolType.CUSTOM_SYMBOL,
+            category = com.example.model.SymbolCategory.CUSTOM,
+            name = "حلقه ترکیبی ویژه",
+            x = 220f,
+            y = 80f,
+            isRingSound = true,
+            imagePath = "/data/data/com.aistudio.chaharkhat.notnegar/files/symbols/sym_1.png",
+            customData = "custom_id_123"
+        )
+
+        val project = ScoreProject(
+            title = "پروژه با نماد سفارشی",
+            pages = listOf(ScorePage(symbols = listOf(customSym)))
+        )
+
+        val json = ScoreExporter.projectToJson(project)
+        val res = ScoreImporter.parseProjectJson(json)
+
+        assertTrue(res.isSuccess)
+        val importedSym = res.data?.pages?.first()?.symbols?.first()
+        assertNotNull(importedSym)
+        assertEquals(SymbolType.CUSTOM_SYMBOL, importedSym?.type)
+        assertEquals("حلقه ترکیبی ویژه", importedSym?.name)
+        assertTrue(importedSym?.isRingSound == true)
+        assertEquals("/data/data/com.aistudio.chaharkhat.notnegar/files/symbols/sym_1.png", importedSym?.imagePath)
+        assertEquals("custom_id_123", importedSym?.customData)
+    }
+
+    @Test
+    fun testStaffSnapper_strictlyEnforcesLine4ForCustomRingSounds() {
+        val page = ScorePage()
+        val staves = page.generateStaves()
+        assertTrue(staves.isNotEmpty())
+        val staff = staves[0]
+
+        // Candidate Y near line 1 (Bottom line)
+        val candidateX = staff.left + 100f
+        val candidateY = staff.line1Y + 2f
+
+        // When isRingSound = true, it MUST snap to line 4 (top line)
+        val (_, finalRingY) = com.example.model.StaffSnapper.calculatePosition(
+            candidateX = candidateX,
+            candidateY = candidateY,
+            isRingSound = true,
+            isSnapMode = true,
+            staves = staves
+        )
+        assertEquals(staff.line4Y, finalRingY, 0.01f)
+
+        // When isRingSound = false, it can snap to line 1
+        val (_, finalNormalY) = com.example.model.StaffSnapper.calculatePosition(
+            candidateX = candidateX,
+            candidateY = candidateY,
+            isRingSound = false,
+            isSnapMode = true,
+            staves = staves
+        )
+        assertEquals(staff.line1Y, finalNormalY, 0.01f)
+    }
 }

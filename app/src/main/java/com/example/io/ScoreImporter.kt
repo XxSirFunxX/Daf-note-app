@@ -1,5 +1,7 @@
 package com.example.io
 
+import android.content.Context
+import android.net.Uri
 import com.example.model.PaperSize
 import com.example.model.ScorePage
 import com.example.model.ScoreProject
@@ -9,6 +11,7 @@ import com.example.model.SymbolType
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
+import java.io.InputStream
 import java.io.StringReader
 
 data class MusicXmlImportReport(
@@ -28,7 +31,26 @@ data class ImportResult<T>(
 object ScoreImporter {
 
     /**
-     * Parses native project JSON into a ScoreProject.
+     * Reads and parses a project from a SAF content Uri or File Uri.
+     */
+    fun readProjectFromUri(context: Context, uri: Uri): ImportResult<ScoreProject> {
+        return try {
+            val content = context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.bufferedReader(Charsets.UTF_8).readText()
+            } ?: return ImportResult(null, false, "خطا در خواندن فایل از مسیر انتخاب‌شده")
+
+            if (content.contains("score-partwise") || content.contains("<?xml")) {
+                parseMusicXml(content)
+            } else {
+                parseProjectJson(content)
+            }
+        } catch (e: Exception) {
+            ImportResult(null, false, "خطا در بارگذاری فایل: ${e.localizedMessage}")
+        }
+    }
+
+    /**
+     * Parses native project JSON (.dafnt or legacy .chaharkhat) into a ScoreProject.
      */
     fun parseProjectJson(jsonString: String): ImportResult<ScoreProject> {
         return try {
@@ -73,10 +95,12 @@ object ScoreImporter {
                                 scale = symObj.optDouble("scale", 1.0).toFloat(),
                                 rotation = symObj.optDouble("rotation", 0.0).toFloat(),
                                 isStemUp = symObj.optBoolean("isStemUp", true),
-                                isRingSound = symObj.optBoolean("isRingSound", category == SymbolCategory.RING_SOUNDS),
+                                isRingSound = symObj.optBoolean("isRingSound", category == SymbolCategory.RING_SOUNDS || symType.isRingSound),
                                 textValue = symObj.optString("textValue").ifEmpty { null },
                                 customData = symObj.optString("customData").ifEmpty { null },
-                                colorHex = symObj.optString("colorHex", "#1E1C1A")
+                                colorHex = symObj.optString("colorHex", "#1E1C1A"),
+                                imagePath = symObj.optString("imagePath").ifEmpty { null },
+                                durationValue = symObj.optString("durationValue").ifEmpty { null }
                             )
                         )
                     }
@@ -90,7 +114,7 @@ object ScoreImporter {
                         subtitle = pageObj.optString("subtitle", ""),
                         lessonNumber = pageObj.optString("lessonNumber", "۱"),
                         paperSize = paperSize,
-                        stavesCount = pageObj.optInt("stavesCount", 5),
+                        stavesCount = pageObj.optInt("stavesCount", 5).coerceIn(1, 16),
                         lineSpacing = pageObj.optDouble("lineSpacing", 16.0).toFloat(),
                         line4SpacingRatio = pageObj.optDouble("line4SpacingRatio", 1.0).toFloat(),
                         marginTop = pageObj.optDouble("marginTop", 110.0).toFloat(),
@@ -213,11 +237,6 @@ object ScoreImporter {
                                 }
                             }
 
-                            // Map pitch to 4-line staff:
-                            // Octave <= 3 -> Line 1 (Tom)
-                            // Octave 4, steps C..E -> Space 1-2 & Line 2 (Mianeh)
-                            // Octave 4, steps F..A -> Space 2-3 & Line 3
-                            // Octave >= 5 -> Line 4 (Bak)
                             val targetY = when {
                                 isRest -> firstStaff.line2Y
                                 octave <= 3 -> firstStaff.line1Y
