@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -266,13 +267,36 @@ fun PageSettingsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Staves Count
-                Text("تعداد حامل‌های صفحه: $stavesCount", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                // Staves Count (1 to 16 per page)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("تعداد حامل‌های صفحه: $stavesCount", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = { if (stavesCount > 1) stavesCount-- },
+                            enabled = stavesCount > 1,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text("-", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = { if (stavesCount < 16) stavesCount++ },
+                            enabled = stavesCount < 16,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text("+", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+                    }
+                }
                 Slider(
                     value = stavesCount.toFloat(),
                     onValueChange = { stavesCount = it.toInt() },
-                    valueRange = 1f..8f,
-                    steps = 6
+                    valueRange = 1f..16f,
+                    steps = 14
                 )
 
                 // Line Spacing
@@ -441,8 +465,8 @@ fun ExportDialog(
                         Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("فایل پروژه قابل ویرایش (.chaharkhat)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("امکان ارسال و بازگشایی مجدد در برنامه با حفظ تمام اشیا", fontSize = 11.sp, color = Color.Gray)
+                            Text("فایل پروژه قابل ویرایش (.dafnt)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("ذخیره و صدور با فرمت استاندارد .dafnt (سازگار با .chaharkhat)", fontSize = 11.sp, color = Color.Gray)
                         }
                     }
                 }
@@ -646,7 +670,8 @@ fun CustomSymbolsManagerDialog(
     onCreateCustom: (String, String, Boolean) -> Unit,
     onUpdateCustom: (CustomSymbolEntity) -> Unit,
     onDeleteCustom: (String) -> Unit,
-    onSelectForPlacement: (CustomSymbolEntity) -> Unit
+    onSelectForPlacement: (CustomSymbolEntity) -> Unit,
+    onReplaceImage: (CustomSymbolEntity, Uri) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var selectedTab by remember { mutableIntStateOf(if (customSymbols.isEmpty()) 0 else 1) }
@@ -657,12 +682,16 @@ fun CustomSymbolsManagerDialog(
     var isRingSound by remember { mutableStateOf(false) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var imageErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // Editing State
     var editingSymbol by remember { mutableStateOf<CustomSymbolEntity?>(null) }
     var editName by remember { mutableStateOf("") }
     var editCategoryId by remember { mutableStateOf("") }
     var editIsRingSound by remember { mutableStateOf(false) }
+    var editNewImageUri by remember { mutableStateOf<Uri?>(null) }
+    var editPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var editImageErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // Deletion Confirmation State
     var symbolToDelete by remember { mutableStateOf<CustomSymbolEntity?>(null) }
@@ -673,11 +702,54 @@ fun CustomSymbolsManagerDialog(
         selectedImageUri = uri
         if (uri != null) {
             try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    previewBitmap = BitmapFactory.decodeStream(stream)
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes != null) {
+                    val mime = context.contentResolver.getType(uri)
+                    val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, mime)
+                    if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Success) {
+                        imageErrorMessage = null
+                        previewBitmap = if (validation.isSvg) {
+                            com.example.util.CustomSymbolImageHelper.renderSvgToBitmap(bytes.inputStream(), 120, 120)
+                        } else {
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }
+                    } else {
+                        imageErrorMessage = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Error).messageFa
+                        previewBitmap = null
+                    }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                imageErrorMessage = "عدم امکان خواندن فایل انتخاب شده: ${e.localizedMessage}"
+                previewBitmap = null
+            }
+        }
+    }
+
+    val replaceImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        editNewImageUri = uri
+        if (uri != null) {
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes != null) {
+                    val mime = context.contentResolver.getType(uri)
+                    val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, mime)
+                    if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Success) {
+                        editImageErrorMessage = null
+                        editPreviewBitmap = if (validation.isSvg) {
+                            com.example.util.CustomSymbolImageHelper.renderSvgToBitmap(bytes.inputStream(), 120, 120)
+                        } else {
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }
+                    } else {
+                        editImageErrorMessage = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Error).messageFa
+                        editPreviewBitmap = null
+                    }
+                }
+            } catch (e: Exception) {
+                editImageErrorMessage = "عدم امکان پردازش تصویر جدید: ${e.localizedMessage}"
+                editPreviewBitmap = null
             }
         }
     }
@@ -741,10 +813,10 @@ fun CustomSymbolsManagerDialog(
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("تصویر انتخاب شد (PNG/SVG)", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                                        Text("برای تغییر تصویر کلیک کنید", fontSize = 10.sp, color = Color.Gray)
+                                        Text("تصویر انتخاب شد (PNG یا SVG)", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text("برای تعویض تصویر کلیک کنید", fontSize = 10.sp, color = Color.Gray)
                                     }
-                                    IconButton(onClick = { selectedImageUri = null; previewBitmap = null }) {
+                                    IconButton(onClick = { selectedImageUri = null; previewBitmap = null; imageErrorMessage = null }) {
                                         Icon(Icons.Default.Delete, contentDescription = "حذف تصویر", tint = MaterialTheme.colorScheme.error)
                                     }
                                 } else {
@@ -761,6 +833,15 @@ fun CustomSymbolsManagerDialog(
                                     }
                                 }
                             }
+                        }
+
+                        if (imageErrorMessage != null) {
+                            Text(
+                                text = imageErrorMessage!!,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
                         }
 
                         // Name input
@@ -861,7 +942,7 @@ fun CustomSymbolsManagerDialog(
                                         val imgPath = sym.imagePath
                                         val fileExists = imgPath?.let { File(it).exists() } == true
                                         val bmp = remember(imgPath) {
-                                            if (fileExists && imgPath != null) BitmapFactory.decodeFile(imgPath) else null
+                                            if (fileExists && imgPath != null) com.example.util.CustomSymbolImageHelper.loadBitmap(File(imgPath), 96) else null
                                         }
 
                                         if (bmp != null) {
@@ -920,6 +1001,9 @@ fun CustomSymbolsManagerDialog(
                                                 editName = sym.name
                                                 editCategoryId = sym.categoryId
                                                 editIsRingSound = sym.isRingSound
+                                                editNewImageUri = null
+                                                editPreviewBitmap = null
+                                                editImageErrorMessage = null
                                             },
                                             modifier = Modifier.size(32.dp)
                                         ) {
@@ -971,17 +1055,80 @@ fun CustomSymbolsManagerDialog(
         }
     )
 
-    // Sub-dialog: Edit custom symbol info
+    // Sub-dialog: Edit custom symbol info (includes name, category, ring rule, AND image replacement)
     if (editingSymbol != null) {
         val sym = editingSymbol!!
         AlertDialog(
             onDismissRequest = { editingSymbol = null },
-            title = { Text("ویرایش اطلاعات نماد سفارشی", fontWeight = FontWeight.Bold) },
+            title = { Text("ویرایش اطلاعات و تصویر نماد سفارشی", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Image replacement section
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { replaceImagePickerLauncher.launch("image/*") }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (editPreviewBitmap != null) {
+                                Image(
+                                    bitmap = editPreviewBitmap!!.asImageBitmap(),
+                                    contentDescription = "تصویر جدید",
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color.White)
+                                        .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("تصویر جدید انتخاب شد", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                    Text("برای تغییر مجدد کلیک کنید", fontSize = 10.sp, color = Color.Gray)
+                                }
+                            } else {
+                                val currentPath = sym.imagePath
+                                val currentBmp = remember(currentPath) {
+                                    currentPath?.let { File(it) }?.takeIf { it.exists() }?.let {
+                                        com.example.util.CustomSymbolImageHelper.loadBitmap(it, 96)
+                                    }
+                                }
+                                if (currentBmp != null) {
+                                    Image(
+                                        bitmap = currentBmp.asImageBitmap(),
+                                        contentDescription = "تصویر فعلی",
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(Color.White)
+                                            .border(1.dp, Color.LightGray, RoundedCornerShape(6.dp))
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text("تعویض تصویر نماد (PNG/SVG)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("برای انتخاب تصویر جدید کلیک کنید", fontSize = 10.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+                    }
+
+                    if (editImageErrorMessage != null) {
+                        Text(editImageErrorMessage!!, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                    }
+
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it },
@@ -1026,6 +1173,10 @@ fun CustomSymbolsManagerDialog(
                 Button(
                     onClick = {
                         if (editName.isNotBlank()) {
+                            val newUri = editNewImageUri
+                            if (newUri != null) {
+                                onReplaceImage(sym, newUri)
+                            }
                             onUpdateCustom(sym.copy(name = editName, categoryId = editCategoryId, isRingSound = editIsRingSound))
                             editingSymbol = null
                         }
@@ -1314,57 +1465,235 @@ fun NoteDefinitionsManagerDialog(
     noteDefinitions: List<NoteDefinitionEntity>,
     categories: List<CategoryEntity>,
     onDismiss: () -> Unit,
-    onToggleHidden: (String, Boolean) -> Unit
+    onToggleHidden: (String, Boolean) -> Unit,
+    onAddNoteDefinition: (String, SymbolType, String, String, Boolean) -> Unit = { _, _, _, _, _ -> },
+    onUpdateNoteDefinition: (NoteDefinitionEntity) -> Unit = {},
+    onDeleteNoteDefinition: (String) -> Unit = {}
 ) {
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: List & Manage, 1: Add New Definition
+
+    // New Definition State
+    var newDefName by remember { mutableStateOf("") }
+    var selectedSymbolType by remember { mutableStateOf(SymbolType.NOTE_QUARTER) }
+    var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull { it.id == "NOTES" }?.id ?: "NOTES") }
+    var durationValue by remember { mutableStateOf("1/4") }
+    var isRingSound by remember { mutableStateOf(false) }
+
+    // Edit Definition State
+    var editingDef by remember { mutableStateOf<NoteDefinitionEntity?>(null) }
+    var editName by remember { mutableStateOf("") }
+    var editCategoryId by remember { mutableStateOf("") }
+    var editDuration by remember { mutableStateOf("1/4") }
+    var editIsRingSound by remember { mutableStateOf(false) }
+
+    // Delete confirmation state
+    var defToDelete by remember { mutableStateOf<NoteDefinitionEntity?>(null) }
+
+    val commonDurations = listOf("1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64")
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("مدیریت و پنهان‌سازی نت‌ها و نمادها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("مدیریت و تعریف نت‌ها و نشانه‌ها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                TabRow(selectedTabIndex = selectedTab) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("فهرست و پنهان‌سازی (${noteDefinitions.size})", fontSize = 11.sp) }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("تعریف نت جدید", fontSize = 11.sp) }
+                    )
+                }
             }
         },
         text = {
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(340.dp)
+                    .height(380.dp)
             ) {
-                Text(
-                    text = "می‌توانید نمادهای کم‌کاربرد را از پالت ابزار موقتاً مخفی کنید:",
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                if (selectedTab == 0) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Text(
+                            text = "با کلید سوئیچ می‌توانید نت‌ها یا نشانه‌ها را از پالت ابزار موقتاً مخفی کنید:",
+                            fontSize = 11.sp,
+                            color = Color.Gray
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    items(noteDefinitions) { noteDef ->
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                            modifier = Modifier.fillMaxWidth()
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(noteDef.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    val catTitle = categories.firstOrNull { it.id == noteDef.categoryId }?.titleFa ?: noteDef.categoryId
-                                    Text("دسته: $catTitle | کشش: ${noteDef.durationValue}", fontSize = 11.sp, color = Color.Gray)
-                                }
+                            items(noteDefinitions) { noteDef ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(noteDef.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                if (noteDef.isDefault) {
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("(اصلی)", fontSize = 10.sp, color = Color.Gray)
+                                                }
+                                            }
+                                            val catTitle = categories.firstOrNull { it.id == noteDef.categoryId }?.titleFa ?: noteDef.categoryId
+                                            Text("دسته: $catTitle | کشش: ${noteDef.durationValue}", fontSize = 11.sp, color = Color.Gray)
+                                        }
 
-                                Switch(
-                                    checked = !noteDef.isHidden,
-                                    onCheckedChange = { isVisible ->
-                                        onToggleHidden(noteDef.id, !isVisible)
+                                        // Edit button
+                                        IconButton(
+                                            onClick = {
+                                                editingDef = noteDef
+                                                editName = noteDef.name
+                                                editCategoryId = noteDef.categoryId
+                                                editDuration = noteDef.durationValue
+                                                editIsRingSound = noteDef.isRingSound
+                                            },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        }
+
+                                        // Delete button (only for non-default)
+                                        if (!noteDef.isDefault) {
+                                            IconButton(
+                                                onClick = { defToDelete = noteDef },
+                                                modifier = Modifier.size(30.dp)
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(4.dp))
+
+                                        Switch(
+                                            checked = !noteDef.isHidden,
+                                            onCheckedChange = { isVisible ->
+                                                onToggleHidden(noteDef.id, !isVisible)
+                                            }
+                                        )
                                     }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // TAB 1: ADD NEW NOTE DEFINITION
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = newDefName,
+                            onValueChange = { newDefName = it },
+                            label = { Text("عنوان تعریف نت") },
+                            placeholder = { Text("مثلاً: نت دولاچنگ سرعتی") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text("دسته‌بندی نت:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            categories.forEach { cat ->
+                                val isSel = cat.id == selectedCategoryId
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = { selectedCategoryId = cat.id },
+                                    label = { Text(cat.titleFa, fontSize = 11.sp) }
                                 )
+                            }
+                        }
+
+                        Text("میزان کشش (Duration):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            commonDurations.forEach { dur ->
+                                val isSel = dur == durationValue
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = { durationValue = dur },
+                                    label = { Text(dur, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                                )
+                            }
+                        }
+
+                        Text("نماد پایه در نت‌نگاری:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val candidateTypes = listOf(
+                                SymbolType.NOTE_WHOLE,
+                                SymbolType.NOTE_HALF,
+                                SymbolType.NOTE_QUARTER,
+                                SymbolType.NOTE_EIGHTH,
+                                SymbolType.NOTE_SIXTEENTH,
+                                SymbolType.NOTE_THIRTYSECOND,
+                                SymbolType.REST_QUARTER,
+                                SymbolType.RING_SINGLE,
+                                SymbolType.RING_TREMOLO
+                            )
+                            candidateTypes.forEach { st ->
+                                val isSel = st == selectedSymbolType
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = {
+                                        selectedSymbolType = st
+                                        if (st.isRingSound || st.defaultCategory.name == "RING_SOUNDS") {
+                                            isRingSound = true
+                                        }
+                                    },
+                                    label = { Text(st.defaultTitleFa, fontSize = 10.sp) }
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isRingSound) Color(0xFFFFEBE6) else Color(0xFFF2EFE8))
+                                .clickable { isRingSound = !isRingSound }
+                                .padding(8.dp)
+                        ) {
+                            Checkbox(checked = isRingSound, onCheckedChange = { isRingSound = it })
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column {
+                                Text("تعلق به صدای حلقه‌ها (قانون خط چهارم)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                Text("محدودیت استقرار منحصراً روی خط چهارم حامل چهارخطی", fontSize = 10.sp, color = Color.Gray)
                             }
                         }
                     }
@@ -1372,7 +1701,150 @@ fun NoteDefinitionsManagerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("بستن") }
+            if (selectedTab == 1) {
+                Button(
+                    onClick = {
+                        if (newDefName.isNotBlank()) {
+                            onAddNoteDefinition(
+                                newDefName.trim(),
+                                selectedSymbolType,
+                                selectedCategoryId,
+                                durationValue,
+                                isRingSound
+                            )
+                            newDefName = ""
+                            selectedTab = 0
+                        }
+                    },
+                    enabled = newDefName.isNotBlank()
+                ) {
+                    Text("افزودن تعریف نت")
+                }
+            } else {
+                TextButton(onClick = onDismiss) { Text("بستن") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("انصراف") }
         }
     )
+
+    // Edit Sub-dialog
+    if (editingDef != null) {
+        val def = editingDef!!
+        AlertDialog(
+            onDismissRequest = { editingDef = null },
+            title = { Text("ویرایش تعریف نت", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("عنوان") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("دسته‌بندی:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            val isSel = cat.id == editCategoryId
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { editCategoryId = cat.id },
+                                label = { Text(cat.titleFa, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+
+                    Text("کشش زمانی:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        commonDurations.forEach { dur ->
+                            val isSel = dur == editDuration
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { editDuration = dur },
+                                label = { Text(dur, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (editIsRingSound) Color(0xFFFFEBE6) else Color(0xFFF2EFE8))
+                            .clickable { editIsRingSound = !editIsRingSound }
+                            .padding(8.dp)
+                    ) {
+                        Checkbox(checked = editIsRingSound, onCheckedChange = { editIsRingSound = it })
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("قانون خط چهارم (صدای حلقه)", fontSize = 11.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editName.isNotBlank()) {
+                            onUpdateNoteDefinition(
+                                def.copy(
+                                    name = editName.trim(),
+                                    categoryId = editCategoryId,
+                                    durationValue = editDuration,
+                                    isRingSound = editIsRingSound
+                                )
+                            )
+                            editingDef = null
+                        }
+                    },
+                    enabled = editName.isNotBlank()
+                ) {
+                    Text("ذخیره تغییرات")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingDef = null }) { Text("انصراف") }
+            }
+        )
+    }
+
+    // Delete confirmation
+    if (defToDelete != null) {
+        val def = defToDelete!!
+        AlertDialog(
+            onDismissRequest = { defToDelete = null },
+            title = { Text("حذف تعریف نت") },
+            text = { Text("آیا از حذف تعریف '${def.name}' اطمینان دارید؟") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteNoteDefinition(def.id)
+                        defToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("بله، حذف شود")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { defToDelete = null }) { Text("انصراف") }
+            }
+        )
+    }
 }
+

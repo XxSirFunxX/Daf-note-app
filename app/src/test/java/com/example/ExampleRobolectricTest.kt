@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import kotlinx.coroutines.flow.first
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -131,4 +132,278 @@ class ExampleRobolectricTest {
         )
         assertEquals(staff.line1Y, finalNormalY, 0.01f)
     }
+
+    @Test
+    fun testSvgValidationAndRasterization() {
+        val validSvg = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="40" stroke="green" stroke-width="4" fill="yellow" />
+            </svg>
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+
+        val validation = com.example.util.CustomSymbolImageHelper.validateImage(validSvg, "image/svg+xml")
+        assertTrue(validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Success)
+        assertTrue((validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Success).isSvg)
+
+        val bmp = com.example.util.CustomSymbolImageHelper.renderSvgToBitmap(validSvg.inputStream(), 80, 80)
+        assertNotNull(bmp)
+        assertEquals(80, bmp?.width)
+        assertEquals(80, bmp?.height)
+    }
+
+    @Test
+    fun testInvalidImageValidation_returnsMeaningfulErrorMessage() {
+        val invalidBytes = "This is not an image or SVG file at all".toByteArray(Charsets.UTF_8)
+        val validation = com.example.util.CustomSymbolImageHelper.validateImage(invalidBytes, "text/plain")
+        assertTrue(validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Error)
+        val errorMsg = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Error).messageFa
+        assertTrue(errorMsg.contains("پشتیبانی نمی‌شود") || errorMsg.contains("نامعتبر"))
+    }
+
+    @Test
+    fun testCustomSymbolDatabaseCRUD() = kotlinx.coroutines.test.runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = com.example.data.AppDatabase.getInstance(context)
+        val dao = db.projectDao()
+
+        val symbolId = "test_sym_${System.currentTimeMillis()}"
+        val initialSymbol = com.example.data.CustomSymbolEntity(
+            id = symbolId,
+            name = "نماد مضراب چپ",
+            categoryId = "CUSTOM",
+            isRingSound = false,
+            imagePath = "/data/data/symbols/sym1.png"
+        )
+
+        // 1. Insert
+        dao.insertCustomSymbol(initialSymbol)
+        val listAfterInsert = dao.getAllCustomSymbols().first()
+        assertTrue(listAfterInsert.any { it.id == symbolId && it.name == "نماد مضراب چپ" })
+
+        // 2. Update metadata & replace image
+        val updatedSymbol = initialSymbol.copy(
+            name = "نماد مضراب چپ (ویرایش)",
+            isRingSound = true,
+            imagePath = "/data/data/symbols/sym1_new.svg"
+        )
+        dao.updateCustomSymbol(updatedSymbol)
+        val listAfterUpdate = dao.getAllCustomSymbols().first()
+        val found = listAfterUpdate.find { it.id == symbolId }
+        assertNotNull(found)
+        assertEquals("نماد مضراب چپ (ویرایش)", found?.name)
+        assertTrue(found?.isRingSound == true)
+        assertEquals("/data/data/symbols/sym1_new.svg", found?.imagePath)
+
+        // 3. Delete
+        dao.deleteCustomSymbol(symbolId)
+        val listAfterDelete = dao.getAllCustomSymbols().first()
+        assertTrue(listAfterDelete.none { it.id == symbolId })
+    }
+
+    @Test
+    fun testNoteDefinitionsCRUDAndHiding() = kotlinx.coroutines.test.runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = com.example.data.AppDatabase.getInstance(context)
+        val dao = db.projectDao()
+
+        val defId = "custom_def_test"
+        val noteDef = com.example.data.NoteDefinitionEntity(
+            id = defId,
+            name = "نت دولاچنگ سرعتی",
+            symbolTypeName = "NOTE_SIXTEENTH",
+            categoryId = "NOTES",
+            durationValue = "1/16",
+            isRingSound = false,
+            isDefault = false,
+            isHidden = false
+        )
+
+        // Insert
+        dao.insertNoteDefinition(noteDef)
+        val allDefs = dao.getAllNoteDefinitions().first()
+        assertTrue(allDefs.any { it.id == defId })
+
+        // Hide
+        dao.setNoteDefinitionHidden(defId, true)
+        val activeDefs = dao.getAllActiveNoteDefinitions().first()
+        assertTrue(activeDefs.none { it.id == defId })
+
+        // Unhide
+        dao.setNoteDefinitionHidden(defId, false)
+        val activeDefs2 = dao.getAllActiveNoteDefinitions().first()
+        assertTrue(activeDefs2.any { it.id == defId })
+
+        // Clean up
+        dao.deleteNoteDefinition(defId)
+    }
+
+    @Test
+    fun testCategorySafeDeletion_reassignsSymbols() = kotlinx.coroutines.test.runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = com.example.data.AppDatabase.getInstance(context)
+        val dao = db.projectDao()
+
+        val catId = "CUSTOM_CAT_TEMP"
+        dao.insertCategory(com.example.data.CategoryEntity(catId, "دسته موقت", 10, isDefault = false))
+
+        val symId = "sym_in_temp_cat"
+        dao.insertCustomSymbol(
+            com.example.data.CustomSymbolEntity(symId, "نماد داخل دسته", categoryId = catId)
+        )
+
+        // Reassign and delete safely
+        dao.reassignCategoryCustomSymbols(catId, "CUSTOM")
+        dao.deleteCategory(catId)
+
+        val updatedSym = dao.getAllCustomSymbols().first().find { it.id == symId }
+        assertNotNull(updatedSym)
+        assertEquals("CUSTOM", updatedSym?.categoryId)
+
+        dao.deleteCustomSymbol(symId)
+    }
+
+    @Test
+    fun testRoomMigration1To2_preservesProjectsAndCreatesTables() {
+        val helper = androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory()
+        val config = androidx.sqlite.db.SupportSQLiteOpenHelper.Configuration.builder(ApplicationProvider.getApplicationContext<Context>())
+            .name("migration_test.db")
+            .callback(object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
+                override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("""
+                        CREATE TABLE `projects` (
+                            `id` TEXT NOT NULL, 
+                            `title` TEXT NOT NULL, 
+                            `author` TEXT NOT NULL, 
+                            `createdAt` INTEGER NOT NULL, 
+                            `updatedAt` INTEGER NOT NULL, 
+                            `folderName` TEXT NOT NULL, 
+                            `jsonContent` TEXT NOT NULL, 
+                            PRIMARY KEY(`id`)
+                        )
+                    """.trimIndent())
+                }
+
+                override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            })
+            .build()
+
+        val openHelper = helper.create(config)
+        val db = openHelper.writableDatabase
+
+        // Insert version 1 project
+        db.execSQL("INSERT INTO `projects` VALUES ('proj_1', 'آزمون میگریشن', 'نویسنده', 1000, 2000, 'عمومی', '{}')")
+
+        // Run Migration 1 -> 2
+        com.example.data.AppDatabase.MIGRATION_1_2.migrate(db)
+
+        // Verify project is intact
+        val cursor = db.query("SELECT title, author FROM `projects` WHERE id = 'proj_1'")
+        assertTrue(cursor.moveToFirst())
+        assertEquals("آزمون میگریشن", cursor.getString(0))
+        assertEquals("نویسنده", cursor.getString(1))
+        cursor.close()
+
+        // Verify new tables exist and can be inserted into
+        db.execSQL("INSERT INTO `categories` (`id`, `titleFa`, `sortOrder`, `isDefault`) VALUES ('CAT1', 'دسته تست', 1, 0)")
+        val catCursor = db.query("SELECT titleFa FROM `categories` WHERE id = 'CAT1'")
+        assertTrue(catCursor.moveToFirst())
+        assertEquals("دسته تست", catCursor.getString(0))
+        catCursor.close()
+
+        db.close()
+    }
+
+    @Test
+    fun testPaperSizeA3AndA4DimensionsAreDistinctAndProportional() {
+        // A4 logical & PDF points
+        assertEquals(1000f, PaperSize.A4.widthPt, 0.1f)
+        assertEquals(1414.28f, PaperSize.A4.heightPt, 0.1f)
+        assertEquals(595, PaperSize.A4.pdfWidthPt)
+        assertEquals(842, PaperSize.A4.pdfHeightPt)
+
+        // A3 logical & PDF points must be distinct and larger
+        assertEquals(1414.28f, PaperSize.A3.widthPt, 0.1f)
+        assertEquals(2000f, PaperSize.A3.heightPt, 0.1f)
+        assertEquals(842, PaperSize.A3.pdfWidthPt)
+        assertEquals(1191, PaperSize.A3.pdfHeightPt)
+
+        // Verify A3 is strictly larger than A4
+        assertTrue(PaperSize.A3.widthPt > PaperSize.A4.widthPt)
+        assertTrue(PaperSize.A3.heightPt > PaperSize.A4.heightPt)
+        assertTrue(PaperSize.A3.pdfWidthPt > PaperSize.A4.pdfWidthPt)
+        assertTrue(PaperSize.A3.pdfHeightPt > PaperSize.A4.pdfHeightPt)
+    }
+
+    @Test
+    fun testCorruptProjectJsonSurfacedWithoutDropping() = kotlinx.coroutines.test.runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = com.example.data.AppDatabase.getInstance(context)
+        val dao = db.projectDao()
+        val repo = com.example.data.ScoreRepository(dao, context)
+
+        val corruptId = "corrupt_test_id"
+        val corruptEntity = com.example.data.ProjectEntity(
+            id = corruptId,
+            title = "پروژه مخدوش",
+            author = "نامشخص",
+            createdAt = 1000L,
+            updatedAt = 2000L,
+            folderName = "عمومی",
+            jsonContent = "{ invalid: json content here !! }}"
+        )
+        dao.insertOrUpdateProject(corruptEntity)
+
+        val all = repo.allProjects.first()
+        val foundCorrupt = all.find { it.id == corruptId }
+        assertNotNull(foundCorrupt)
+        assertTrue(foundCorrupt?.isCorrupted == true)
+        assertNotNull(foundCorrupt?.parseError)
+        assertEquals("{ invalid: json content here !! }}", foundCorrupt?.rawCorruptJson)
+
+        // Cleanup
+        dao.deleteProject(corruptEntity)
+    }
+
+    @Test
+    fun testMusicXmlOverflowWrapsToNextStaffOrPage() {
+        val longMusicXml = buildString {
+            append("""<?xml version="1.0" encoding="UTF-8"?>""")
+            append("""<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Daf</part-name></score-part></part-list>""")
+            append("""<part id="P1"><measure number="1">""")
+            append("""<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>""")
+            // Add 40 notes to exceed the right edge of staff 1 and trigger wrapping
+            for (i in 1..40) {
+                append("""<note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>""")
+                if (i % 4 == 0) {
+                    append("""<barline location="right"><bar-style>regular</bar-style></barline>""")
+                }
+            }
+            append("""</measure></part></score-partwise>""")
+        }
+
+        val result = ScoreImporter.parseMusicXml(longMusicXml)
+        assertTrue(result.isSuccess)
+        val project = result.data
+        assertNotNull(project)
+        assertTrue(project?.pages?.isNotEmpty() == true)
+        val allSymbols = project?.pages?.flatMap { it.symbols } ?: emptyList()
+        val notes = allSymbols.filter { it.type == SymbolType.NOTE_QUARTER }
+        assertEquals(40, notes.size)
+
+        // Verify that symbols wrap onto subsequent Y levels (different staves)
+        val distinctYLevels = notes.map { it.y }.distinct()
+        assertTrue("Expected notes to span across multiple staves/Y levels, got: ${distinctYLevels.size}", distinctYLevels.size >= 2)
+    }
+
+    @Test
+    fun testMax16StavesSupportedOnPage() {
+        val page16 = ScorePage(stavesCount = 16)
+        val staves = page16.generateStaves()
+        assertEquals(16, staves.size)
+        // Ensure each staff has strictly descending/spaced lines
+        for (i in 0 until 15) {
+            assertTrue(staves[i].line4Y < staves[i + 1].line1Y)
+        }
+    }
 }
+

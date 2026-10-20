@@ -57,8 +57,15 @@ fun ScoreEditorScreen(
     val context = LocalContext.current
     val project = state.currentProject ?: return
 
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            viewModel.flushAutoSave()
+        }
+    }
+
     // Intercept back button to return to projects list
     BackHandler {
+        viewModel.flushAutoSave()
         onBackToProjects()
     }
 
@@ -87,7 +94,10 @@ fun ScoreEditorScreen(
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
                 isSaving = state.isSaving,
-                onBack = onBackToProjects,
+                onBack = {
+                    viewModel.flushAutoSave()
+                    onBackToProjects()
+                },
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
                 onSave = { viewModel.saveProjectExplicitly() },
@@ -128,6 +138,7 @@ fun ScoreEditorScreen(
                 page = project.activePage,
                 selectedSymbolIds = state.selectedSymbolIds,
                 activePaletteSymbol = state.activePaletteSymbol,
+                activeCustomSymbol = state.activeCustomSymbol,
                 isSnapMode = state.isSnapMode,
                 showGuides = state.showGuides,
                 highlightLine4 = state.highlightLine4,
@@ -224,10 +235,13 @@ fun ScoreEditorScreen(
                 viewModel.updateCustomSymbol(updated)
             },
             onDeleteCustom = { id ->
-                viewModel.removeCustomSymbol(id)
+                viewModel.removeCustomSymbol(id, context)
             },
             onSelectForPlacement = { custom ->
                 viewModel.selectCustomSymbol(custom)
+            },
+            onReplaceImage = { sym, newUri ->
+                viewModel.replaceCustomSymbolImage(context, sym, newUri)
             }
         )
     }
@@ -249,6 +263,15 @@ fun ScoreEditorScreen(
             onDismiss = { showNoteManagerDialog = false },
             onToggleHidden = { id, hidden ->
                 viewModel.toggleNoteDefinitionHidden(id, hidden)
+            },
+            onAddNoteDefinition = { name, type, catId, dur, isRing ->
+                viewModel.addNoteDefinition(name, type, catId, dur, isRing)
+            },
+            onUpdateNoteDefinition = { def ->
+                viewModel.updateNoteDefinition(def)
+            },
+            onDeleteNoteDefinition = { id ->
+                viewModel.deleteNoteDefinition(id)
             }
         )
     }

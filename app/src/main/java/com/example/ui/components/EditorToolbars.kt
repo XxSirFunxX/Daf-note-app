@@ -16,13 +16,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.GridOff
 import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.HorizontalRule
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -30,6 +33,9 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.DropdownMenu
@@ -239,34 +245,48 @@ fun FloatingQuickToolbar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Snap Mode Chip
+            // 1. Snap Mode Chip (distinct On / Off icons)
             FilterChip(
                 selected = isSnapMode,
                 onClick = onToggleSnap,
                 label = { Text(if (isSnapMode) "چسبان به خطوط" else "جایگذاری آزاد", fontSize = 11.sp) },
                 leadingIcon = {
                     Icon(
-                        imageVector = Icons.Default.GridOn,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
+                        imageVector = if (isSnapMode) Icons.Default.GridOn else Icons.Default.GridOff,
+                        contentDescription = if (isSnapMode) "چسبیدن به خطوط فعال است" else "چسبیدن به خطوط غیرفعال است",
+                        modifier = Modifier.size(15.dp)
                     )
                 },
                 modifier = Modifier.testTag("btn_toggle_snap")
             )
 
-            // Multi-Select Chip
+            // 2. Multi-Select Chip (distinct Checklist / TouchApp icons)
             FilterChip(
                 selected = isMultiSelectMode,
                 onClick = onToggleMultiSelect,
-                label = { Text(if (isMultiSelectMode) "چندانتخابی: فعال" else "چندانتخابی", fontSize = 11.sp) },
+                label = { Text(if (isMultiSelectMode) "چندانتخابی: فعال" else "تک‌انتخابی", fontSize = 11.sp) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (isMultiSelectMode) Icons.Default.Checklist else Icons.Default.TouchApp,
+                        contentDescription = if (isMultiSelectMode) "حالت چندانتخابی فعال است" else "حالت تک‌انتخابی فعال است",
+                        modifier = Modifier.size(15.dp)
+                    )
+                },
                 modifier = Modifier.testTag("btn_toggle_multiselect")
             )
 
-            // Line 4 Highlight Chip
+            // 3. Line 4 Highlight Chip (distinct Star / HorizontalRule icons)
             FilterChip(
                 selected = highlightLine4,
                 onClick = onToggleLine4,
-                label = { Text("تمایز خط ۴", fontSize = 11.sp) },
+                label = { Text(if (highlightLine4) "خط ۴ برجسته" else "خط ۴ عادی", fontSize = 11.sp) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (highlightLine4) Icons.Default.Star else Icons.Default.HorizontalRule,
+                        contentDescription = if (highlightLine4) "تمایز رنگی خط ۴ فعال است" else "تمایز خط ۴ غیرفعال است",
+                        modifier = Modifier.size(15.dp)
+                    )
+                },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = Color(0xFFFFEBE6),
                     selectedLabelColor = Color(0xFF8C2812)
@@ -274,11 +294,18 @@ fun FloatingQuickToolbar(
                 modifier = Modifier.testTag("btn_toggle_line4")
             )
 
-            // Guides Toggle
+            // 4. Note Guides Toggle (distinct Visibility / VisibilityOff icons)
             FilterChip(
                 selected = showGuides,
                 onClick = onToggleGuides,
-                label = { Text("راهنمای نت", fontSize = 11.sp) },
+                label = { Text(if (showGuides) "راهنما: روشن" else "راهنما: خاموش", fontSize = 11.sp) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (showGuides) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                        contentDescription = if (showGuides) "خطوط راهنمای نت‌گذاری فعال است" else "خطوط راهنما مخفی است",
+                        modifier = Modifier.size(15.dp)
+                    )
+                },
                 modifier = Modifier.testTag("btn_toggle_guides")
             )
 

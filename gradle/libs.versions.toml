@@ -94,6 +94,9 @@ firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
 androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
+androidsvg = { module = "com.caverock:androidsvg-aar", version = "1.4" }
+coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coilCompose" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version = "21.3.0" }
 
 
 [plugins]

@@ -122,11 +122,16 @@ object ScoreExporter {
         val document = PdfDocument()
 
         for ((index, page) in project.pages.withIndex()) {
-            val width = page.paperSize.widthPt.toInt()
-            val height = page.paperSize.heightPt.toInt()
+            val pdfWidth = page.paperSize.pdfWidthPt
+            val pdfHeight = page.paperSize.pdfHeightPt
 
-            val pageInfo = PdfDocument.PageInfo.Builder(width, height, index + 1).create()
+            val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, index + 1).create()
             val pdfPage = document.startPage(pageInfo)
+
+            val scaleX = pdfWidth.toFloat() / page.paperSize.widthPt
+            val scaleY = pdfHeight.toFloat() / page.paperSize.heightPt
+            pdfPage.canvas.save()
+            pdfPage.canvas.scale(scaleX, scaleY)
 
             ScoreRenderer.drawPage(
                 canvas = pdfPage.canvas,
@@ -135,6 +140,7 @@ object ScoreExporter {
                 showGuides = false,
                 highlightLine4 = false
             )
+            pdfPage.canvas.restore()
 
             document.finishPage(pdfPage)
         }
@@ -154,11 +160,16 @@ object ScoreExporter {
         return try {
             val document = PdfDocument()
             for ((index, page) in project.pages.withIndex()) {
-                val width = page.paperSize.widthPt.toInt()
-                val height = page.paperSize.heightPt.toInt()
+                val pdfWidth = page.paperSize.pdfWidthPt
+                val pdfHeight = page.paperSize.pdfHeightPt
 
-                val pageInfo = PdfDocument.PageInfo.Builder(width, height, index + 1).create()
+                val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, index + 1).create()
                 val pdfPage = document.startPage(pageInfo)
+
+                val scaleX = pdfWidth.toFloat() / page.paperSize.widthPt
+                val scaleY = pdfHeight.toFloat() / page.paperSize.heightPt
+                pdfPage.canvas.save()
+                pdfPage.canvas.scale(scaleX, scaleY)
 
                 ScoreRenderer.drawPage(
                     canvas = pdfPage.canvas,
@@ -167,6 +178,7 @@ object ScoreExporter {
                     showGuides = false,
                     highlightLine4 = false
                 )
+                pdfPage.canvas.restore()
 
                 document.finishPage(pdfPage)
             }

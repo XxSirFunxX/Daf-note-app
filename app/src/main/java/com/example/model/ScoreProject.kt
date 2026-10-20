@@ -12,7 +12,10 @@ data class ScoreProject(
     val folderName: String? = null,
     val pages: List<ScorePage> = listOf(ScorePage()),
     val activePageIndex: Int = 0,
-    val version: Int = 1
+    val version: Int = 1,
+    val isCorrupted: Boolean = false,
+    val rawCorruptJson: String? = null,
+    val parseError: String? = null
 ) {
     val activePage: ScorePage
         get() = pages.getOrElse(activePageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))) {

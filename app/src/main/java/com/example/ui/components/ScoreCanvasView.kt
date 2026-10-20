@@ -2,6 +2,8 @@ package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -38,6 +40,7 @@ fun ScoreCanvasView(
     page: ScorePage,
     selectedSymbolIds: Set<String>,
     activePaletteSymbol: SymbolType?,
+    activeCustomSymbol: com.example.data.CustomSymbolEntity? = null,
     isSnapMode: Boolean,
     showGuides: Boolean,
     highlightLine4: Boolean,
@@ -90,65 +93,98 @@ fun ScoreCanvasView(
             return logicalX to logicalY
         }
 
-        var isDraggingSymbol by remember { mutableStateOf(false) }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // 1. Two-finger Pinch to Zoom & Pan
-                .pointerInput(page.id, zoomScale, panOffsetX, panOffsetY) {
-                    detectTransformGestures { centroid, pan, zoom, _ ->
-                        val oldZoom = zoomScale
-                        val newZoom = (oldZoom * zoom).coerceIn(0.5f, 4.0f)
-                        val zoomFactor = newZoom / oldZoom
+                .pointerInput(page.id, selectedSymbolIds, activePaletteSymbol, activeCustomSymbol, zoomScale, panOffsetX, panOffsetY) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val downPos = down.position
+                        val (downLogicalX, downLogicalY) = screenToLogical(downPos.x, downPos.y)
 
-                        // Zoom centered on the touch centroid
-                        val newPanX = (panOffsetX + pan.x) * zoomFactor + (1f - zoomFactor) * (centroid.x - containerWidthPx / 2f)
-                        val newPanY = (panOffsetY + pan.y) * zoomFactor + (1f - zoomFactor) * (centroid.y - containerHeightPx / 2f)
-
-                        onZoomAndPanChange(newZoom, newPanX, newPanY)
-                    }
-                }
-                // 2. Single-finger drag (symbol drag or canvas pan)
-                .pointerInput(page.id, selectedSymbolIds, activePaletteSymbol, zoomScale, panOffsetX, panOffsetY) {
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            val (lx, ly) = screenToLogical(offset.x, offset.y)
-                            val hit = page.symbols.any { sym ->
-                                val (hw, hh) = sym.getVisualBounds(page.lineSpacing)
-                                lx in (sym.x - hw - 12f)..(sym.x + hw + 12f) &&
-                                        ly in (sym.y - hh - 12f)..(sym.y + hh + 12f)
-                            }
-                            isDraggingSymbol = hit || selectedSymbolIds.isNotEmpty()
-                        },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            if (isDraggingSymbol && activePaletteSymbol == null) {
-                                // Dragging symbol(s) in logical coordinates
-                                val deltaLogicalX = (dragAmount.x / (renderedWidthPx * zoomScale)) * pageW
-                                val deltaLogicalY = (dragAmount.y / (renderedHeightPx * zoomScale)) * pageH
-                                onSymbolDrag(deltaLogicalX, deltaLogicalY)
-                            } else {
-                                // Panning the view
-                                onZoomAndPanChange(zoomScale, panOffsetX + dragAmount.x, panOffsetY + dragAmount.y)
-                            }
-                        },
-                        onDragEnd = {
-                            if (isDraggingSymbol) {
-                                isDraggingSymbol = false
-                                onSymbolDragFinished()
-                            }
-                        },
-                        onDragCancel = {
-                            isDraggingSymbol = false
+                        // Check if down was on a selected symbol or any symbol on page
+                        val hitSymbol = page.symbols.lastOrNull { sym ->
+                            val (hw, hh) = sym.getVisualBounds(page.lineSpacing)
+                            downLogicalX in (sym.x - hw - 14f)..(sym.x + hw + 14f) &&
+                            downLogicalY in (sym.y - hh - 14f)..(sym.y + hh + 14f)
                         }
-                    )
-                }
-                // 3. Single tap (place symbol or select existing)
-                .pointerInput(page.id, activePaletteSymbol, zoomScale, panOffsetX, panOffsetY) {
-                    detectTapGestures { offset ->
-                        val (lx, ly) = screenToLogical(offset.x, offset.y)
-                        onCanvasTap(lx, ly)
+
+                        var isTransforming = false
+                        var isDragging = false
+                        val isSymbolDrag = (hitSymbol != null || selectedSymbolIds.isNotEmpty()) &&
+                                           activePaletteSymbol == null && activeCustomSymbol == null
+
+                        var prevCentroid = downPos
+                        var prevDistance = 0f
+                        var currentZoom = zoomScale
+                        var currentPanX = panOffsetX
+                        var currentPanY = panOffsetY
+                        var totalDragDistance = 0f
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val activePointers = event.changes.filter { it.pressed }
+
+                            if (activePointers.isEmpty()) {
+                                // All pointers released
+                                if (!isDragging && !isTransforming && totalDragDistance < 15f) {
+                                    // Clean tap!
+                                    onCanvasTap(downLogicalX, downLogicalY)
+                                } else if (isDragging && isSymbolDrag) {
+                                    onSymbolDragFinished()
+                                }
+                                break
+                            }
+
+                            if (activePointers.size >= 2) {
+                                // Two fingers: Pinch to zoom and 2-finger pan
+                                isTransforming = true
+                                isDragging = false
+                                val p1 = activePointers[0].position
+                                val p2 = activePointers[1].position
+                                val currentDistance = (p1 - p2).getDistance()
+                                val currentCentroid = (p1 + p2) / 2f
+
+                                if (prevDistance > 0f && currentDistance > 0f) {
+                                    val zoomFactor = currentDistance / prevDistance
+                                    val newZoom = (currentZoom * zoomFactor).coerceIn(0.5f, 4.0f)
+                                    val factorChange = newZoom / currentZoom
+
+                                    val panDelta = currentCentroid - prevCentroid
+                                    currentPanX = (currentPanX + panDelta.x) * factorChange + (1f - factorChange) * (currentCentroid.x - containerWidthPx / 2f)
+                                    currentPanY = (currentPanY + panDelta.y) * factorChange + (1f - factorChange) * (currentCentroid.y - containerHeightPx / 2f)
+                                    currentZoom = newZoom
+
+                                    onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                }
+
+                                prevDistance = currentDistance
+                                prevCentroid = currentCentroid
+                                event.changes.forEach { it.consume() }
+                            } else if (activePointers.size == 1 && !isTransforming) {
+                                // Single finger: drag symbol or pan canvas
+                                val change = activePointers[0]
+                                val dragDelta = change.position - change.previousPosition
+                                totalDragDistance += dragDelta.getDistance()
+
+                                if (totalDragDistance > 10f) {
+                                    isDragging = true
+                                    change.consume()
+
+                                    if (isSymbolDrag && activePaletteSymbol == null && activeCustomSymbol == null) {
+                                        // Drag symbol in logical units
+                                        val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
+                                        val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
+                                        onSymbolDrag(deltaLogicalX, deltaLogicalY)
+                                    } else {
+                                        // Pan the canvas
+                                        currentPanX += dragDelta.x
+                                        currentPanY += dragDelta.y
+                                        onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
             contentAlignment = Alignment.Center

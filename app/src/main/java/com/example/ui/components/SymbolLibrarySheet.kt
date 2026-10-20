@@ -196,8 +196,11 @@ fun SymbolLibrarySheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 1. Standard SymbolTypes matching current category
-                val standardSymbols = SymbolType.values().filter { it.defaultCategory.name == activeCategoryId }
+                // 1. Standard SymbolTypes matching current category (filtering out hidden note definitions)
+                val hiddenDefNames = noteDefinitions.filter { it.isHidden }.map { it.symbolTypeName }.toSet()
+                val standardSymbols = SymbolType.values().filter { 
+                    it.defaultCategory.name == activeCategoryId && !hiddenDefNames.contains(it.name)
+                }
                 items(standardSymbols) { symbolType ->
                     val isSelected = symbolType == activeSymbol
                     SymbolCard(
@@ -335,7 +338,7 @@ fun CustomSymbolCard(
             val imgPath = symbol.imagePath
             val fileExists = imgPath?.let { File(it).exists() } == true
             val bitmap: Bitmap? = remember(imgPath) {
-                if (fileExists && imgPath != null) BitmapFactory.decodeFile(imgPath) else null
+                if (fileExists && imgPath != null) com.example.util.CustomSymbolImageHelper.loadBitmap(File(imgPath), 96) else null
             }
 
             if (bitmap != null) {

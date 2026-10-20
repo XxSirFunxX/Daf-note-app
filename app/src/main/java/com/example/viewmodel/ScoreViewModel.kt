@@ -22,12 +22,17 @@ import com.example.model.ScoreSymbol
 import com.example.model.StaffSnapper
 import com.example.model.SymbolCategory
 import com.example.model.SymbolType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed class EditorScreen {
@@ -73,6 +78,7 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: ScoreRepository
     private val undoManager = UndoRedoManager()
+    private val autoSaveChannel = Channel<ScoreProject>(Channel.CONFLATED)
 
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
@@ -86,10 +92,21 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             repository.ensureDefaultNoteDefinitions()
         }
 
+        viewModelScope.launch(Dispatchers.IO) {
+            autoSaveChannel.receiveAsFlow()
+                .debounce(500L)
+                .collectLatest { projectToSave ->
+                    repository.saveProject(projectToSave)
+                }
+        }
+
+        val prefs = application.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        val hasSeeded = prefs.getBoolean("has_seeded_starter", false)
+
         viewModelScope.launch {
             repository.allProjects.collectLatest { list ->
-                if (list.isEmpty()) {
-                    // Seed initial realistic starter sample
+                if (list.isEmpty() && !hasSeeded) {
+                    prefs.edit().putBoolean("has_seeded_starter", true).apply()
                     val sample = repository.createDefaultStarterProject()
                     repository.saveProject(sample)
                 } else {
@@ -182,24 +199,38 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
     // --- SELECTION & MODES ---
 
     fun selectPaletteSymbol(type: SymbolType) {
-        _uiState.update {
-            it.copy(
-                activePaletteSymbol = type,
-                activeCustomSymbol = null,
-                activePaletteCategory = type.defaultCategory,
-                activePaletteCategoryId = type.defaultCategory.name
-            )
+        _uiState.update { current ->
+            if (current.activePaletteSymbol == type) {
+                // Tapping active symbol again cancels the selection
+                current.copy(activePaletteSymbol = null, activeCustomSymbol = null)
+            } else {
+                current.copy(
+                    activePaletteSymbol = type,
+                    activeCustomSymbol = null,
+                    activePaletteCategory = type.defaultCategory,
+                    activePaletteCategoryId = type.defaultCategory.name
+                )
+            }
         }
     }
 
     fun selectCustomSymbol(custom: CustomSymbolEntity) {
-        _uiState.update {
-            it.copy(
-                activeCustomSymbol = custom,
-                activePaletteSymbol = null,
-                activePaletteCategoryId = custom.categoryId
-            )
+        _uiState.update { current ->
+            if (current.activeCustomSymbol?.id == custom.id) {
+                // Tapping active custom symbol again cancels selection
+                current.copy(activeCustomSymbol = null, activePaletteSymbol = null)
+            } else {
+                current.copy(
+                    activeCustomSymbol = custom,
+                    activePaletteSymbol = null,
+                    activePaletteCategoryId = custom.categoryId
+                )
+            }
         }
+    }
+
+    fun cancelPaletteSelection() {
+        _uiState.update { it.copy(activePaletteSymbol = null, activeCustomSymbol = null) }
     }
 
     fun selectCategory(categoryId: String) {
@@ -603,7 +634,7 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val updatedProject = project.updateActivePage { current ->
             current.copy(
                 paperSize = paperSize,
-                stavesCount = stavesCount.coerceIn(1, 10),
+                stavesCount = stavesCount.coerceIn(1, 16),
                 lineSpacing = lineSpacing.coerceIn(10f, 26f),
                 line4SpacingRatio = line4SpacingRatio.coerceIn(0.8f, 2.0f),
                 title = title,
@@ -634,20 +665,29 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveProjectExplicitly() {
         val project = _uiState.value.currentProject ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isSaving = true) }
             repository.saveProject(project)
-            _uiState.update { it.copy(isSaving = false) }
-            showNotification("پروژه ذخیره شد")
+            withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(isSaving = false) }
+                showNotification("پروژه ذخیره شد")
+            }
         }
     }
 
     private fun triggerAutoSave() {
         val project = _uiState.value.currentProject ?: return
-        viewModelScope.launch {
+        autoSaveChannel.trySend(project)
+    }
+
+    fun flushAutoSave() {
+        val project = _uiState.value.currentProject ?: return
+        viewModelScope.launch(Dispatchers.IO) {
             repository.saveProject(project)
         }
     }
+
+    // --- CUSTOM SYMBOLS ---
 
     // --- CUSTOM SYMBOLS ---
 
@@ -656,15 +696,42 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         imageUri: Uri,
         name: String,
         categoryId: String,
-        isRingSound: Boolean
+        isRingSound: Boolean,
+        onResult: ((Boolean, String?) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            val entity = repository.addCustomSymbolFromUri(context, imageUri, name, categoryId, isRingSound)
+            val (entity, error) = repository.addCustomSymbolFromUri(context, imageUri, name, categoryId, isRingSound)
             if (entity != null) {
                 selectCustomSymbol(entity)
-                showNotification("نماد سفارشی '$name' با موفقیت به کتابخانه افزوده شد")
+                val msg = "نماد سفارشی '$name' با موفقیت به کتابخانه افزوده شد"
+                showNotification(msg)
+                onResult?.invoke(true, null)
             } else {
-                showNotification("خطا در ذخیره نماد سفارشی")
+                val errorMsg = error ?: "خطا در پردازش یا ذخیره‌سازی نماد سفارشی"
+                showNotification(errorMsg)
+                onResult?.invoke(false, errorMsg)
+            }
+        }
+    }
+
+    fun replaceCustomSymbolImage(
+        context: Context,
+        symbol: CustomSymbolEntity,
+        newImageUri: Uri,
+        onResult: ((Boolean, String?) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            val (updated, error) = repository.replaceCustomSymbolImage(context, symbol, newImageUri)
+            if (updated != null) {
+                if (_uiState.value.activeCustomSymbol?.id == updated.id) {
+                    _uiState.update { it.copy(activeCustomSymbol = updated) }
+                }
+                showNotification("تصویر نماد سفارشی '${updated.name}' با موفقیت تغییر یافت")
+                onResult?.invoke(true, null)
+            } else {
+                val errorMsg = error ?: "خطا در تعویض تصویر نماد"
+                showNotification(errorMsg)
+                onResult?.invoke(false, errorMsg)
             }
         }
     }
@@ -692,9 +759,9 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun removeCustomSymbol(id: String) {
+    fun removeCustomSymbol(id: String, context: Context? = null) {
         viewModelScope.launch {
-            repository.deleteCustomSymbol(id)
+            repository.deleteCustomSymbol(id, context)
             if (_uiState.value.activeCustomSymbol?.id == id) {
                 _uiState.update { it.copy(activeCustomSymbol = null) }
             }
@@ -725,6 +792,40 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 selectCategory("NOTES")
             }
             showNotification("دسته‌بندی با حفظ نمادها حذف شد")
+        }
+    }
+
+    fun addNoteDefinition(
+        name: String,
+        symbolType: SymbolType,
+        categoryId: String,
+        duration: String,
+        isRingSound: Boolean
+    ) {
+        viewModelScope.launch {
+            repository.addNoteDefinition(
+                name = name,
+                symbolType = symbolType,
+                categoryId = categoryId,
+                duration = duration,
+                isRingSound = isRingSound,
+                imagePath = null
+            )
+            showNotification("تعریف نت '$name' افزوده شد")
+        }
+    }
+
+    fun updateNoteDefinition(def: NoteDefinitionEntity) {
+        viewModelScope.launch {
+            repository.updateNoteDefinition(def)
+            showNotification("تعریف نت '${def.name}' بروزرسانی شد")
+        }
+    }
+
+    fun deleteNoteDefinition(id: String) {
+        viewModelScope.launch {
+            repository.deleteNoteDefinition(id)
+            showNotification("تعریف نت حذف شد")
         }
     }
 

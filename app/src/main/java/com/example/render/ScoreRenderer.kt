@@ -647,13 +647,35 @@ object ScoreRenderer {
         if (!path.isNullOrBlank()) {
             val file = java.io.File(path)
             if (file.exists()) {
+                val halfSize = 14f * symbol.scale
+                val rect = RectF(-halfSize, -halfSize, halfSize, halfSize)
+
+                // 1. Direct SVG Vector rendering for crisp line display
+                if (path.endsWith(".svg", ignoreCase = true)) {
+                    try {
+                        file.inputStream().use { stream ->
+                            val svg = com.caverock.androidsvg.SVG.getFromInputStream(stream)
+                            svg.renderToCanvas(canvas, rect)
+                            return
+                        }
+                    } catch (ignored: Exception) {}
+                }
+
+                // 2. Standard Android Bitmap (PNG, JPEG, WebP)
                 val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
                 if (bmp != null) {
-                    val halfSize = 14f
-                    val rect = RectF(-halfSize, -halfSize, halfSize, halfSize)
                     canvas.drawBitmap(bmp, null, rect, null)
                     return
                 }
+
+                // 3. Fallback SVG attempt in case file was saved without .svg extension
+                try {
+                    file.inputStream().use { stream ->
+                        val svg = com.caverock.androidsvg.SVG.getFromInputStream(stream)
+                        svg.renderToCanvas(canvas, rect)
+                        return
+                    }
+                } catch (ignored: Exception) {}
             }
         }
         // Fallback: draw custom geometric/symbol marker with name

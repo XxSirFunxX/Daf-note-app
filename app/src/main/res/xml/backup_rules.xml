@@ -1,13 +1,13 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
--->
+<?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Include Room Database & SharedPreferences -->
+    <include domain="database" path="chaharkhat_score.db"/>
+    <include domain="database" path="chaharkhat_score.db-wal"/>
+    <include domain="database" path="chaharkhat_score.db-shm"/>
+    <include domain="sharedpref" path="."/>
+    <include domain="file" path="custom_symbols/"/>
+
+    <!-- Exclude cache and temporary exports -->
+    <exclude domain="file" path="exports/"/>
+    <exclude domain="root" path="cache/"/>
 </full-backup-content>

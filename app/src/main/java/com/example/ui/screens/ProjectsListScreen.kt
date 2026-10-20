@@ -80,6 +80,7 @@ fun ProjectsListScreen(
     var newProjectDialogOpen by remember { mutableStateOf(false) }
     var newProjectTitle by remember { mutableStateOf("") }
     var projectToDelete by remember { mutableStateOf<ScoreProject?>(null) }
+    var corruptProjectViewing by remember { mutableStateOf<ScoreProject?>(null) }
 
     val filteredProjects = if (searchQuery.isBlank()) {
         projects
@@ -204,14 +205,72 @@ fun ProjectsListScreen(
                     items(filteredProjects, key = { it.id }) { project ->
                         ProjectItemCard(
                             project = project,
-                            onClick = { onOpenProject(project) },
-                            onDuplicate = { onDuplicateProject(project) },
+                            onClick = {
+                                if (project.isCorrupted) {
+                                    corruptProjectViewing = project
+                                } else {
+                                    onOpenProject(project)
+                                }
+                            },
+                            onDuplicate = { if (!project.isCorrupted) onDuplicateProject(project) },
                             onDelete = { projectToDelete = project }
                         )
                     }
                 }
             }
         }
+    }
+
+    // Corrupt Project Diagnostic & Recovery Dialog
+    corruptProjectViewing?.let { proj ->
+        AlertDialog(
+            onDismissRequest = { corruptProjectViewing = null },
+            title = { Text("خطا در ساختار فایل پروژه", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "ساختار JSON این پروژه آسیب‌دیده یا فرمت آن نامعتبر است: ${proj.parseError ?: "خطای ناشناخته"}",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "پیش‌نمایش محتوای خام فایل:",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .padding(4.dp)
+                    ) {
+                        Text(
+                            text = proj.rawCorruptJson?.take(1000) ?: "فاقد محتوا",
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        projectToDelete = proj
+                        corruptProjectViewing = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("حذف فایل آسیب‌دیده")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { corruptProjectViewing = null }) { Text("بستن") }
+            }
+        )
     }
 
     // New Project Dialog
@@ -304,15 +363,27 @@ fun ProjectItemCard(
                 modifier = Modifier
                     .size(46.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(
+                        if (project.isCorrupted) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.primaryContainer
+                    ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "۴خط",
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
-                )
+                if (project.isCorrupted) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "پروژه آسیب‌دیده",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
+                } else {
+                    Text(
+                        text = "۴خط",
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -322,14 +393,22 @@ fun ProjectItemCard(
                     text = project.title,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = if (project.isCorrupted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "${project.pages.size} صفحه • $totalSymbols نماد • $formattedDate",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (project.isCorrupted) {
+                    Text(
+                        text = "فایل آسیب‌دیده • ${project.parseError ?: "خطای ساختار"} (برای جزئیات لمس کنید)",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    Text(
+                        text = "${project.pages.size} صفحه • $totalSymbols نماد • $formattedDate",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             IconButton(onClick = onDuplicate, modifier = Modifier.size(36.dp)) {

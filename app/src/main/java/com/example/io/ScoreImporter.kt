@@ -39,10 +39,18 @@ object ScoreImporter {
                 stream.bufferedReader(Charsets.UTF_8).readText()
             } ?: return ImportResult(null, false, "خطا در خواندن فایل از مسیر انتخاب‌شده")
 
-            if (content.contains("score-partwise") || content.contains("<?xml")) {
+            val trimmed = content.trimStart()
+            val isXml = trimmed.startsWith("<?xml", ignoreCase = true) || 
+                        trimmed.startsWith("<score-partwise", ignoreCase = true) ||
+                        trimmed.startsWith("<!DOCTYPE score-partwise", ignoreCase = true)
+            val isJson = trimmed.startsWith("{") || trimmed.startsWith("[")
+
+            if (isXml) {
                 parseMusicXml(content)
-            } else {
+            } else if (isJson) {
                 parseProjectJson(content)
+            } else {
+                ImportResult(null, false, "فرمت فایل ناشناخته است. لطفاً فایل معتبر .dafnt، .chaharkhat یا MusicXML انتخاب کنید.")
             }
         } catch (e: Exception) {
             ImportResult(null, false, "خطا در بارگذاری فایل: ${e.localizedMessage}")
@@ -176,14 +184,48 @@ object ScoreImporter {
             var restsCount = 0
             val unmappedItems = mutableListOf<String>()
 
-            val convertedSymbols = mutableListOf<ScoreSymbol>()
+            val templatePage = ScorePage(title = "پروژه وارد شده از MusicXML")
+            var currentStaves = templatePage.generateStaves()
+            if (currentStaves.isEmpty()) return ImportResult(null, false, "خطا در ساخت حامل")
 
-            val page = ScorePage(title = "پروژه وارد شده از MusicXML")
-            val staves = page.generateStaves()
-            val firstStaff = staves.firstOrNull() ?: return ImportResult(null, false, "خطا در ساخت حامل")
-
-            var currentX = firstStaff.left + 70f
+            val pages = mutableListOf<ScorePage>()
+            val currentSymbols = mutableListOf<ScoreSymbol>()
+            var currentStaffIndex = 0
+            var currentStaff = currentStaves[currentStaffIndex]
+            var currentX = currentStaff.left + 75f
             val xStep = 45f
+
+            // Add time signature symbol on the first staff
+            currentSymbols.add(
+                ScoreSymbol(
+                    type = SymbolType.TIME_CUSTOM,
+                    x = currentStaff.left + 35f,
+                    y = (currentStaff.line1Y + currentStaff.line4Y) / 2f,
+                    textValue = "$beats/$beatType"
+                )
+            )
+
+            fun advanceStaffOrPage() {
+                currentStaffIndex++
+                if (currentStaffIndex < currentStaves.size) {
+                    currentStaff = currentStaves[currentStaffIndex]
+                    currentX = currentStaff.left + 50f
+                } else {
+                    // Current page is full, create a new page
+                    pages.add(
+                        templatePage.copy(
+                            id = java.util.UUID.randomUUID().toString(),
+                            pageNumber = pages.size + 1,
+                            symbols = currentSymbols.toList()
+                        )
+                    )
+                    currentSymbols.clear()
+                    currentStaffIndex = 0
+                    currentStaves = templatePage.generateStaves()
+                    currentStaff = currentStaves[0]
+                    currentX = currentStaff.left + 50f
+                }
+            }
 
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 when (eventType) {
@@ -203,6 +245,20 @@ object ScoreImporter {
                             "type" -> noteTypeStr = parser.nextText()
                             "step" -> step = parser.nextText()
                             "octave" -> octave = parser.nextText().toIntOrNull() ?: 4
+                            "barline" -> {
+                                currentSymbols.add(
+                                    ScoreSymbol(
+                                        type = SymbolType.BAR_SINGLE,
+                                        x = currentX,
+                                        y = (currentStaff.line1Y + currentStaff.line4Y) / 2f,
+                                        isRingSound = false
+                                    )
+                                )
+                                currentX += 28f
+                                if (currentX > currentStaff.right - 45f) {
+                                    advanceStaffOrPage()
+                                }
+                            }
                             "key", "clef", "dynamics", "lyric" -> {
                                 val name = currentTag
                                 if (!unmappedItems.contains(name)) {
@@ -238,14 +294,14 @@ object ScoreImporter {
                             }
 
                             val targetY = when {
-                                isRest -> firstStaff.line2Y
-                                octave <= 3 -> firstStaff.line1Y
-                                octave == 4 && (step == "C" || step == "D" || step == "E") -> firstStaff.line2Y
-                                octave == 4 -> firstStaff.line3Y
-                                else -> firstStaff.line4Y
+                                isRest -> currentStaff.line2Y
+                                octave <= 3 -> currentStaff.line1Y
+                                octave == 4 && (step == "C" || step == "D" || step == "E") -> currentStaff.line2Y
+                                octave == 4 -> currentStaff.line3Y
+                                else -> currentStaff.line4Y
                             }
 
-                            convertedSymbols.add(
+                            currentSymbols.add(
                                 ScoreSymbol(
                                     type = symbolType,
                                     x = currentX,
@@ -255,8 +311,8 @@ object ScoreImporter {
                             )
 
                             currentX += xStep
-                            if (currentX > firstStaff.right - 40f) {
-                                currentX = firstStaff.left + 70f
+                            if (currentX > currentStaff.right - 45f) {
+                                advanceStaffOrPage()
                             }
                             isNote = false
                         }
@@ -265,20 +321,19 @@ object ScoreImporter {
                 eventType = parser.next()
             }
 
-            // Add time signature symbol at the beginning
-            convertedSymbols.add(
-                0,
-                ScoreSymbol(
-                    type = SymbolType.TIME_CUSTOM,
-                    x = firstStaff.left + 35f,
-                    y = (firstStaff.line1Y + firstStaff.line4Y) / 2f,
-                    textValue = "$beats/$beatType"
+            if (currentSymbols.isNotEmpty() || pages.isEmpty()) {
+                pages.add(
+                    templatePage.copy(
+                        id = java.util.UUID.randomUUID().toString(),
+                        pageNumber = pages.size + 1,
+                        symbols = currentSymbols.toList()
+                    )
                 )
-            )
+            }
 
             val generatedProject = ScoreProject(
                 title = "MusicXML ($beats/$beatType)",
-                pages = listOf(page.copy(symbols = convertedSymbols))
+                pages = pages
             )
 
             val persianIncompatibles = unmappedItems.map { tag ->

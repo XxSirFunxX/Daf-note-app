@@ -23,8 +23,23 @@ class ScoreRepository(
 ) {
 
     val allProjects: Flow<List<ScoreProject>> = dao.getAllProjects().map { list ->
-        list.mapNotNull { entity ->
-            ScoreImporter.parseProjectJson(entity.jsonContent).data
+        list.map { entity ->
+            val parsedResult = ScoreImporter.parseProjectJson(entity.jsonContent)
+            if (parsedResult.isSuccess && parsedResult.data != null) {
+                parsedResult.data
+            } else {
+                ScoreProject(
+                    id = entity.id,
+                    title = entity.title,
+                    author = entity.author,
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt,
+                    folderName = entity.folderName,
+                    isCorrupted = true,
+                    rawCorruptJson = entity.jsonContent,
+                    parseError = parsedResult.errorMessage ?: "خطای ساختار فایل پروژه"
+                )
+            }
         }
     }
 
@@ -182,7 +197,7 @@ class ScoreRepository(
     // --- CUSTOM SYMBOLS MANAGEMENT WITH PERSISTENT INTERNAL STORAGE ---
 
     /**
-     * Imports a user-selected PNG or SVG image, saves a permanent local copy
+     * Imports a user-selected PNG or SVG image, validates it, saves a permanent local copy
      * in the app's internal filesDir, and creates a CustomSymbolEntity.
      */
     suspend fun addCustomSymbolFromUri(
@@ -191,18 +206,32 @@ class ScoreRepository(
         name: String,
         categoryId: String = "CUSTOM",
         isRingSound: Boolean = false
-    ): CustomSymbolEntity? {
+    ): Pair<CustomSymbolEntity?, String?> {
         val id = UUID.randomUUID().toString()
         val symbolsDir = File(context.filesDir, "symbols").apply { mkdirs() }
-        val ext = if (context.contentResolver.getType(imageUri)?.contains("svg") == true) "svg" else "png"
+
+        val bytes = try {
+            context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
+        } catch (e: Exception) {
+            return Pair(null, "عدم امکان دسترسی به فایل انتخاب شده: ${e.localizedMessage}")
+        }
+
+        if (bytes == null || bytes.isEmpty()) {
+            return Pair(null, "فایل انتخاب شده خالی یا غیرقابل خواندن است.")
+        }
+
+        val declaredMime = context.contentResolver.getType(imageUri)
+        val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, declaredMime)
+        if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Error) {
+            return Pair(null, validation.messageFa)
+        }
+
+        val isSvg = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Success).isSvg
+        val ext = if (isSvg) "svg" else "png"
         val destFile = File(symbolsDir, "sym_$id.$ext")
 
         return try {
-            context.contentResolver.openInputStream(imageUri)?.use { input ->
-                FileOutputStream(destFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
+            FileOutputStream(destFile).use { it.write(bytes) }
             val entity = CustomSymbolEntity(
                 id = id,
                 name = name,
@@ -212,10 +241,49 @@ class ScoreRepository(
                 createdAt = System.currentTimeMillis()
             )
             dao.insertCustomSymbol(entity)
-            entity
+            Pair(entity, null)
         } catch (e: Exception) {
-            e.printStackTrace()
-            null
+            Pair(null, "خطا در ذخیره‌سازی نماد در حافظه دستگاه: ${e.localizedMessage}")
+        }
+    }
+
+    suspend fun replaceCustomSymbolImage(
+        context: Context,
+        symbol: CustomSymbolEntity,
+        newImageUri: Uri
+    ): Pair<CustomSymbolEntity?, String?> {
+        val bytes = try {
+            context.contentResolver.openInputStream(newImageUri)?.use { it.readBytes() }
+        } catch (e: Exception) {
+            return Pair(null, "عدم امکان خواندن تصویر جدید: ${e.localizedMessage}")
+        }
+
+        if (bytes == null || bytes.isEmpty()) {
+            return Pair(null, "تصویر انتخابی خالی است.")
+        }
+
+        val declaredMime = context.contentResolver.getType(newImageUri)
+        val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, declaredMime)
+        if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Error) {
+            return Pair(null, validation.messageFa)
+        }
+
+        val isSvg = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Success).isSvg
+        val ext = if (isSvg) "svg" else "png"
+        val symbolsDir = File(context.filesDir, "symbols").apply { mkdirs() }
+        val newFile = File(symbolsDir, "sym_${symbol.id}_${System.currentTimeMillis()}.$ext")
+
+        return try {
+            FileOutputStream(newFile).use { it.write(bytes) }
+            // Delete old file if existed
+            symbol.imagePath?.let { oldPath ->
+                try { File(oldPath).delete() } catch (ignored: Exception) {}
+            }
+            val updated = symbol.copy(imagePath = newFile.absolutePath)
+            dao.updateCustomSymbol(updated)
+            Pair(updated, null)
+        } catch (e: Exception) {
+            Pair(null, "خطا در جایگزینی فایل تصویر: ${e.localizedMessage}")
         }
     }
 
@@ -240,7 +308,14 @@ class ScoreRepository(
         dao.updateCustomSymbol(symbol)
     }
 
-    suspend fun deleteCustomSymbol(id: String) {
+    suspend fun deleteCustomSymbol(id: String, context: Context? = null) {
+        if (context != null) {
+            try {
+                // Find and delete the file
+                val file = File(File(context.filesDir, "symbols"), id)
+                if (file.exists()) file.delete()
+            } catch (ignored: Exception) {}
+        }
         dao.deleteCustomSymbol(id)
     }
 
