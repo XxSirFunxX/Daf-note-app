@@ -42,7 +42,6 @@ sealed class EditorScreen {
     object PageSettings : EditorScreen()
     object ExportDialog : EditorScreen()
     object ImportDialog : EditorScreen()
-    object DriveSyncDialog : EditorScreen()
     object CustomSymbolsManager : EditorScreen()
 }
 
@@ -158,6 +157,17 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 zoomScale = 1.0f,
                 panOffsetX = 0f,
                 panOffsetY = 0f
+            )
+        }
+    }
+
+    fun closeCurrentProject() {
+        flushAutoSave()
+        _uiState.update {
+            it.copy(
+                currentProject = null,
+                currentScreen = EditorScreen.ProjectsList,
+                selectedSymbolIds = emptySet()
             )
         }
     }

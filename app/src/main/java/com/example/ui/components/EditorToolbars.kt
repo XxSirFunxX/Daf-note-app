@@ -41,10 +41,12 @@ import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -81,7 +83,6 @@ fun EditorTopBar(
     onOpenPageSettings: () -> Unit,
     onOpenExport: () -> Unit,
     onOpenImport: () -> Unit,
-    onOpenDriveSync: () -> Unit,
     onOpenCustomSymbols: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -189,12 +190,6 @@ fun EditorTopBar(
                         modifier = Modifier.testTag("menu_import")
                     )
                     DropdownMenuItem(
-                        text = { Text("پشتیبان‌گیری و Google Drive") },
-                        leadingIcon = { Icon(Icons.Default.CloudUpload, contentDescription = null) },
-                        onClick = { menuExpanded = false; onOpenDriveSync() },
-                        modifier = Modifier.testTag("menu_drive_sync")
-                    )
-                    DropdownMenuItem(
                         text = { Text("مدیریت نمادهای سفارشی") },
                         leadingIcon = { Icon(Icons.Default.Star, contentDescription = null) },
                         onClick = { menuExpanded = false; onOpenCustomSymbols() },
@@ -245,74 +240,66 @@ fun FloatingQuickToolbar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 1. Snap Mode Chip (distinct On / Off icons)
-            FilterChip(
-                selected = isSnapMode,
-                onClick = onToggleSnap,
-                label = { Text(if (isSnapMode) "چسبان به خطوط" else "جایگذاری آزاد", fontSize = 11.sp) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isSnapMode) Icons.Default.GridOn else Icons.Default.GridOff,
-                        contentDescription = if (isSnapMode) "چسبیدن به خطوط فعال است" else "چسبیدن به خطوط غیرفعال است",
-                        modifier = Modifier.size(15.dp)
-                    )
-                },
-                modifier = Modifier.testTag("btn_toggle_snap")
-            )
+            // 1. Snap Mode (distinct On / Off icons, no visible text label)
+            FilledIconToggleButton(
+                checked = isSnapMode,
+                onCheckedChange = { onToggleSnap() },
+                modifier = Modifier.size(34.dp).testTag("btn_toggle_snap")
+            ) {
+                Icon(
+                    imageVector = if (isSnapMode) Icons.Default.GridOn else Icons.Default.GridOff,
+                    contentDescription = if (isSnapMode) "چسبیدن به خطوط فعال است" else "چسبیدن به خطوط غیرفعال است",
+                    modifier = Modifier.size(17.dp)
+                )
+            }
 
-            // 2. Multi-Select Chip (distinct Checklist / TouchApp icons)
-            FilterChip(
-                selected = isMultiSelectMode,
-                onClick = onToggleMultiSelect,
-                label = { Text(if (isMultiSelectMode) "چندانتخابی: فعال" else "تک‌انتخابی", fontSize = 11.sp) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isMultiSelectMode) Icons.Default.Checklist else Icons.Default.TouchApp,
-                        contentDescription = if (isMultiSelectMode) "حالت چندانتخابی فعال است" else "حالت تک‌انتخابی فعال است",
-                        modifier = Modifier.size(15.dp)
-                    )
-                },
-                modifier = Modifier.testTag("btn_toggle_multiselect")
-            )
+            // 2. Multi-Select (distinct Checklist / TouchApp icons, no visible text label)
+            FilledIconToggleButton(
+                checked = isMultiSelectMode,
+                onCheckedChange = { onToggleMultiSelect() },
+                modifier = Modifier.size(34.dp).testTag("btn_toggle_multiselect")
+            ) {
+                Icon(
+                    imageVector = if (isMultiSelectMode) Icons.Default.Checklist else Icons.Default.TouchApp,
+                    contentDescription = if (isMultiSelectMode) "حالت چندانتخابی فعال است" else "حالت تک‌انتخابی فعال است",
+                    modifier = Modifier.size(17.dp)
+                )
+            }
 
-            // 3. Line 4 Highlight Chip (distinct Star / HorizontalRule icons)
-            FilterChip(
-                selected = highlightLine4,
-                onClick = onToggleLine4,
-                label = { Text(if (highlightLine4) "خط ۴ برجسته" else "خط ۴ عادی", fontSize = 11.sp) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (highlightLine4) Icons.Default.Star else Icons.Default.HorizontalRule,
-                        contentDescription = if (highlightLine4) "تمایز رنگی خط ۴ فعال است" else "تمایز خط ۴ غیرفعال است",
-                        modifier = Modifier.size(15.dp)
-                    )
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color(0xFFFFEBE6),
-                    selectedLabelColor = Color(0xFF8C2812)
-                ),
-                modifier = Modifier.testTag("btn_toggle_line4")
-            )
+            // 3. Line 4 Highlight (distinct Star / HorizontalRule icons, no visible text label)
+            FilledIconToggleButton(
+                checked = highlightLine4,
+                onCheckedChange = { onToggleLine4() },
+                modifier = Modifier.size(34.dp).testTag("btn_toggle_line4"),
+                colors = IconButtonDefaults.filledIconToggleButtonColors(
+                    checkedContainerColor = Color(0xFFFFEBE6),
+                    checkedContentColor = Color(0xFF8C2812)
+                )
+            ) {
+                Icon(
+                    imageVector = if (highlightLine4) Icons.Default.Star else Icons.Default.HorizontalRule,
+                    contentDescription = if (highlightLine4) "تمایز رنگی خط ۴ فعال است" else "تمایز خط ۴ غیرفعال است",
+                    modifier = Modifier.size(17.dp)
+                )
+            }
 
-            // 4. Note Guides Toggle (distinct Visibility / VisibilityOff icons)
-            FilterChip(
-                selected = showGuides,
-                onClick = onToggleGuides,
-                label = { Text(if (showGuides) "راهنما: روشن" else "راهنما: خاموش", fontSize = 11.sp) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (showGuides) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                        contentDescription = if (showGuides) "خطوط راهنمای نت‌گذاری فعال است" else "خطوط راهنما مخفی است",
-                        modifier = Modifier.size(15.dp)
-                    )
-                },
-                modifier = Modifier.testTag("btn_toggle_guides")
-            )
+            // 4. Note Guides (distinct Visibility / VisibilityOff icons, no visible text label)
+            FilledIconToggleButton(
+                checked = showGuides,
+                onCheckedChange = { onToggleGuides() },
+                modifier = Modifier.size(34.dp).testTag("btn_toggle_guides")
+            ) {
+                Icon(
+                    imageVector = if (showGuides) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = if (showGuides) "خطوط راهنمای نت‌گذاری فعال است" else "خطوط راهنما مخفی است",
+                    modifier = Modifier.size(17.dp)
+                )
+            }
 
             // Zoom Reset
             IconButton(
                 onClick = onResetZoom,
-                modifier = Modifier.size(36.dp).testTag("btn_reset_zoom")
+                modifier = Modifier.size(34.dp).testTag("btn_reset_zoom")
             ) {
                 Icon(Icons.Default.ZoomOutMap, contentDescription = "اندازه پیش‌فرض ۱۰۰٪", modifier = Modifier.size(18.dp))
             }

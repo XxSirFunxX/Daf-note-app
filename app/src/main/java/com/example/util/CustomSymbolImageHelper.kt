@@ -16,8 +16,12 @@ import java.io.InputStream
  */
 object CustomSymbolImageHelper {
 
+    const val MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
+    const val MAX_IMAGE_DIMENSION = 4096
+    const val SUPPORTED_FORMATS_DESC = "فرمت‌های مجاز: PNG، SVG، JPG، WebP (حداکثر حجم ۵ مگابایت)"
+
     sealed class ValidationResult {
-        data class Success(val format: String, val isSvg: Boolean) : ValidationResult()
+        data class Success(val format: String, val isSvg: Boolean, val width: Int = 0, val height: Int = 0) : ValidationResult()
         data class Error(val messageFa: String) : ValidationResult()
     }
 
@@ -27,6 +31,11 @@ object CustomSymbolImageHelper {
     fun validateImage(bytes: ByteArray, declaredMimeType: String?): ValidationResult {
         if (bytes.isEmpty()) {
             return ValidationResult.Error("فایل انتخاب شده خالی است.")
+        }
+
+        if (bytes.size > MAX_FILE_SIZE_BYTES) {
+            val sizeMb = String.format(java.util.Locale.US, "%.1f", bytes.size / (1024f * 1024f))
+            return ValidationResult.Error("حجم فایل انتخابی ($sizeMb مگابایت) بیش از حد مجاز است. حداکثر حجم مجاز ۵ مگابایت می‌باشد.")
         }
 
         // Check for non-image MIME types (e.g. text/plain, application/pdf, audio/...)
@@ -46,7 +55,13 @@ object CustomSymbolImageHelper {
             return try {
                 ByteArrayInputStream(bytes).use { stream ->
                     val svg = SVG.getFromInputStream(stream)
-                    ValidationResult.Success("SVG", isSvg = true)
+                    val w = svg.documentWidth.toInt().coerceAtLeast(1)
+                    val h = svg.documentHeight.toInt().coerceAtLeast(1)
+                    if (w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
+                        ValidationResult.Error("ابعاد تصویر SVG (${w}×${h}) بیش از حد مجاز است (حداکثر $MAX_IMAGE_DIMENSION پیکسل).")
+                    } else {
+                        ValidationResult.Success("SVG", isSvg = true, width = w, height = h)
+                    }
                 }
             } catch (e: Exception) {
                 ValidationResult.Error("فایل SVG نامعتبر یا آسیب‌دیده است: ${e.localizedMessage ?: "خطای ساختار"}")
@@ -56,16 +71,18 @@ object CustomSymbolImageHelper {
         // 2. Check for Bitmap (PNG, JPEG, WebP, GIF) magic headers
         val detectedFormat = detectBitmapFormat(bytes)
         if (detectedFormat == null) {
-            return ValidationResult.Error("فرمت فایل تصویری پشتیبانی نمی‌شود. لطفاً فایل PNG، JPG یا SVG معتبر انتخاب کنید.")
+            return ValidationResult.Error("فرمت فایل تصویری پشتیبانی نمی‌شود. $SUPPORTED_FORMATS_DESC")
         }
 
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-            if (options.outWidth > 0 && options.outHeight > 0) {
-                ValidationResult.Success(detectedFormat, isSvg = false)
+            val w = options.outWidth
+            val h = options.outHeight
+            if (w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
+                ValidationResult.Error("ابعاد تصویر (${w}×${h}) بیش از حد مجاز است (حداکثر $MAX_IMAGE_DIMENSION پیکسل).")
             } else {
-                ValidationResult.Success(detectedFormat, isSvg = false)
+                ValidationResult.Success(detectedFormat, isSvg = false, width = w, height = h)
             }
         } catch (e: Exception) {
             ValidationResult.Error("فایل تصویری قابل پردازش نیست: ${e.localizedMessage}")

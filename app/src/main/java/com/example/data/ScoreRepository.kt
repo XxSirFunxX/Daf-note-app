@@ -93,6 +93,10 @@ class ScoreRepository(
     // --- CATEGORY MANAGEMENT ---
 
     suspend fun ensureDefaultCategories() {
+        val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        val hasSeeded = prefs?.getBoolean("has_seeded_default_cats", false) ?: false
+        if (hasSeeded) return
+
         val existing = dao.getAllCategories().firstOrNull()
         if (existing.isNullOrEmpty()) {
             val defaults = listOf(
@@ -106,6 +110,7 @@ class ScoreRepository(
                 CategoryEntity("CUSTOM", "سفارشی", 7, isDefault = true)
             )
             dao.insertCategories(defaults)
+            prefs?.edit()?.putBoolean("has_seeded_default_cats", true)?.apply()
         }
     }
 
@@ -133,6 +138,10 @@ class ScoreRepository(
     // --- NOTE DEFINITIONS MANAGEMENT ---
 
     suspend fun ensureDefaultNoteDefinitions() {
+        val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        val hasSeeded = prefs?.getBoolean("has_seeded_default_notes", false) ?: false
+        if (hasSeeded) return
+
         val existing = dao.getAllNoteDefinitions().firstOrNull()
         if (existing.isNullOrEmpty()) {
             val defaults = listOf(
@@ -156,6 +165,7 @@ class ScoreRepository(
                 NoteDefinitionEntity("DEF_RING_THUMB", "شستی / پرتاب", "RING_THUMB_ROLL", "RING_SOUNDS", isRingSound = true, isDefault = true)
             )
             dao.insertNoteDefinitions(defaults)
+            prefs?.edit()?.putBoolean("has_seeded_default_notes", true)?.apply()
         }
     }
 
@@ -182,12 +192,129 @@ class ScoreRepository(
         return def
     }
 
+    suspend fun addNoteDefinitionFromUri(
+        context: Context,
+        imageUri: Uri?,
+        name: String,
+        symbolType: SymbolType,
+        categoryId: String,
+        duration: String,
+        isRingSound: Boolean
+    ): Pair<NoteDefinitionEntity?, String?> {
+        val id = UUID.randomUUID().toString()
+        var savedImagePath: String? = null
+
+        if (imageUri != null) {
+            val bytes = try {
+                context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
+            } catch (e: Exception) {
+                return Pair(null, "عدم امکان دسترسی به تصویر انتخاب شده: ${e.localizedMessage}")
+            }
+
+            if (bytes != null && bytes.isNotEmpty()) {
+                val declaredMime = context.contentResolver.getType(imageUri)
+                val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, declaredMime)
+                if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Error) {
+                    return Pair(null, validation.messageFa)
+                }
+
+                val isSvg = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Success).isSvg
+                val ext = if (isSvg) "svg" else "png"
+                val symbolsDir = File(context.filesDir, "symbols").apply { mkdirs() }
+                val destFile = File(symbolsDir, "notedef_${id}.$ext")
+                try {
+                    FileOutputStream(destFile).use { it.write(bytes) }
+                    savedImagePath = destFile.absolutePath
+                } catch (e: Exception) {
+                    return Pair(null, "خطا در ذخیره‌سازی تصویر در حافظه دستگاه: ${e.localizedMessage}")
+                }
+            }
+        }
+
+        val def = NoteDefinitionEntity(
+            id = id,
+            name = name,
+            symbolTypeName = symbolType.name,
+            categoryId = categoryId,
+            durationValue = duration,
+            isRingSound = isRingSound,
+            isDefault = false,
+            isHidden = false,
+            imagePath = savedImagePath
+        )
+        dao.insertNoteDefinition(def)
+        return Pair(def, null)
+    }
+
+    suspend fun updateNoteDefinitionWithImage(
+        context: Context,
+        def: NoteDefinitionEntity,
+        newImageUri: Uri?,
+        removeImage: Boolean = false
+    ): Pair<NoteDefinitionEntity?, String?> {
+        var newPath = def.imagePath
+
+        if (removeImage) {
+            def.imagePath?.let { p ->
+                try { File(p).delete() } catch (ignored: Exception) {}
+            }
+            newPath = null
+        } else if (newImageUri != null) {
+            val bytes = try {
+                context.contentResolver.openInputStream(newImageUri)?.use { it.readBytes() }
+            } catch (e: Exception) {
+                return Pair(null, "عدم امکان دسترسی به تصویر جدید: ${e.localizedMessage}")
+            }
+
+            if (bytes == null || bytes.isEmpty()) {
+                return Pair(null, "تصویر انتخابی خالی است.")
+            }
+
+            val declaredMime = context.contentResolver.getType(newImageUri)
+            val validation = com.example.util.CustomSymbolImageHelper.validateImage(bytes, declaredMime)
+            if (validation is com.example.util.CustomSymbolImageHelper.ValidationResult.Error) {
+                return Pair(null, validation.messageFa)
+            }
+
+            val isSvg = (validation as com.example.util.CustomSymbolImageHelper.ValidationResult.Success).isSvg
+            val ext = if (isSvg) "svg" else "png"
+            val symbolsDir = File(context.filesDir, "symbols").apply { mkdirs() }
+            val newFile = File(symbolsDir, "notedef_${def.id}_${System.currentTimeMillis()}.$ext")
+
+            try {
+                FileOutputStream(newFile).use { it.write(bytes) }
+                def.imagePath?.let { p ->
+                    try { File(p).delete() } catch (ignored: Exception) {}
+                }
+                newPath = newFile.absolutePath
+            } catch (e: Exception) {
+                return Pair(null, "خطا در ذخیره تصویر جدید: ${e.localizedMessage}")
+            }
+        }
+
+        val updated = def.copy(imagePath = newPath)
+        dao.updateNoteDefinition(updated)
+        return Pair(updated, null)
+    }
+
     suspend fun updateNoteDefinition(def: NoteDefinitionEntity) {
         dao.updateNoteDefinition(def)
     }
 
-    suspend fun deleteNoteDefinition(id: String) {
+    suspend fun deleteNoteDefinitionSafely(id: String) {
+        val all = dao.getAllNoteDefinitions().firstOrNull() ?: emptyList()
+        val target = all.find { it.id == id }
+        target?.imagePath?.let { path ->
+            val otherReferences = all.any { it.id != id && it.imagePath == path }
+            if (!otherReferences) {
+                try { File(path).delete() } catch (ignored: Exception) {}
+            }
+        }
         dao.deleteNoteDefinition(id)
+    }
+
+    suspend fun deleteNoteDefinition(id: String) {
+        deleteNoteDefinitionSafely(id)
     }
 
     suspend fun hideNoteDefinition(id: String, hidden: Boolean) {

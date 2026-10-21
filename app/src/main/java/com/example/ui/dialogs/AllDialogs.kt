@@ -487,7 +487,29 @@ fun ImportDialog(
     onDismiss: () -> Unit,
     onImportContent: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var inputContent by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val content = stream.bufferedReader().readText()
+                    if (content.isNotBlank()) {
+                        onImportContent(content)
+                        onDismiss()
+                    } else {
+                        errorMessage = "فایل انتخاب‌شده خالی است"
+                    }
+                }
+            } catch (e: Exception) {
+                errorMessage = "خطا در خواندن فایل: ${e.localizedMessage}"
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -495,19 +517,50 @@ fun ImportDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "متن JSON پروژه اختصاصی یا فایل MusicXML را اینجا قرار دهید یا از نمونه‌های آماده استفاده کنید:",
+                    text = "می‌توانید فایل پروژه (.dafnt، .chaharkhat، .musicxml، .json) را از حافظه دستگاه انتخاب کنید یا محتوای آن را وارد نمایید:",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Button(
+                    onClick = {
+                        try {
+                            filePickerLauncher.launch(arrayOf("*/*"))
+                        } catch (e: Exception) {
+                            errorMessage = "امکان باز کردن انتخابگر فایل وجود ندارد"
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("btn_select_import_file")
+                ) {
+                    Icon(Icons.Default.UploadFile, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("انتخاب فایل از حافظه دستگاه")
+                }
+
+                if (errorMessage != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = inputContent,
-                    onValueChange = { inputContent = it },
-                    label = { Text("محتوای فایل (JSON / MusicXML)") },
+                    onValueChange = {
+                        inputContent = it
+                        errorMessage = null
+                    },
+                    label = { Text("یا چسباندن متن فایل (JSON / MusicXML)") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp)
+                        .height(130.dp)
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -562,102 +615,7 @@ fun ImportDialog(
 
 // ==========================================
 // 5. GOOGLE DRIVE SYNC DIALOG
-// ==========================================
 
-@Composable
-fun DriveSyncDialog(
-    projectsCount: Int,
-    onDismiss: () -> Unit,
-    onBackupToDrive: () -> Unit,
-    onRestoreFromDrive: () -> Unit
-) {
-    var simulatedDriveStatus by remember { mutableStateOf("حالت آفلاین (مستقل - بدون نیاز به حساب گوگل)") }
-    var conflictStrategy by remember { mutableStateOf("نگهداری هر دو نسخه (پیشنهادی)") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("همگام‌سازی و Google Drive", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFEBF3FC)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("وضعیت ذخیره‌سازی محلی:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Text("$projectsCount پروژه روی حافظه داخلی دستگاه شما محفوظ است.", fontSize = 12.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("نیازمندی امنیتی: استفاده از تمامی امکانات برنامه کاملاً محلی و بدون اجبار به ورود حساب گوگل فعال است.", fontSize = 11.sp, color = Color(0xFF1565C0))
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("مدیریت تعارض‌ها (Conflict Handling):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                listOf("نگهداری هر دو نسخه (پیشنهادی)", "اولویت با نسخه محلی دستگاه", "اولویت با نسخه ابری Drive").forEach { strategy ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { conflictStrategy = strategy }
-                    ) {
-                        RadioButton(selected = conflictStrategy == strategy, onClick = { conflictStrategy = strategy })
-                        Text(strategy, fontSize = 12.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            simulatedDriveStatus = "پشتیبان‌گیری ابری با موفقیت در پوشه امن ذخیره شد."
-                            onBackupToDrive()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("پشتیبان‌گیری", fontSize = 11.sp)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            simulatedDriveStatus = "بازیابی پروژه‌ها انجام شد."
-                            onRestoreFromDrive()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("بازیابی", fontSize = 11.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(simulatedDriveStatus, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("بستن") }
-        }
-    )
-}
-
-// ==========================================
 // 6. CUSTOM SYMBOLS COMPREHENSIVE MANAGER
 // ==========================================
 

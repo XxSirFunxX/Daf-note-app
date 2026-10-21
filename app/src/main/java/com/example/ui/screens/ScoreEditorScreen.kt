@@ -38,7 +38,6 @@ import com.example.ui.components.ScoreCanvasView
 import com.example.ui.components.SymbolLibrarySheet
 import com.example.ui.dialogs.CategoryManagerDialog
 import com.example.ui.dialogs.CustomSymbolsManagerDialog
-import com.example.ui.dialogs.DriveSyncDialog
 import com.example.ui.dialogs.ExportDialog
 import com.example.ui.dialogs.ImportDialog
 import com.example.ui.dialogs.NoteDefinitionsManagerDialog
@@ -73,7 +72,6 @@ fun ScoreEditorScreen(
     var showPageSettings by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
-    var showDriveSyncDialog by remember { mutableStateOf(false) }
     var showCustomSymbolsDialog by remember { mutableStateOf(false) }
     var showCategoryManagerDialog by remember { mutableStateOf(false) }
     var showNoteManagerDialog by remember { mutableStateOf(false) }
@@ -105,7 +103,6 @@ fun ScoreEditorScreen(
                 onOpenPageSettings = { showPageSettings = true },
                 onOpenExport = { showExportDialog = true },
                 onOpenImport = { showImportDialog = true },
-                onOpenDriveSync = { showDriveSyncDialog = true },
                 onOpenCustomSymbols = { showCustomSymbolsDialog = true }
             )
         },
@@ -208,15 +205,6 @@ fun ScoreEditorScreen(
         ImportDialog(
             onDismiss = { showImportDialog = false },
             onImportContent = { content -> viewModel.importProjectContent(content) }
-        )
-    }
-
-    if (showDriveSyncDialog) {
-        DriveSyncDialog(
-            projectsCount = state.projectsList.size,
-            onDismiss = { showDriveSyncDialog = false },
-            onBackupToDrive = { viewModel.showNotification("پشتیبان‌گیری ابری با موفقیت ثبت شد") },
-            onRestoreFromDrive = { viewModel.showNotification("بازیابی پروژه‌ها با موفقیت انجام شد") }
         )
     }
 

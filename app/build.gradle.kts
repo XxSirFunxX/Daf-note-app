@@ -107,7 +107,7 @@ dependencies {
   implementation(libs.coil.svg)
   implementation(libs.androidsvg)
   implementation(libs.converter.moshi)
-  implementation(libs.play.services.auth)
+  // implementation(libs.play.services.auth) // Removed as Google Drive is removed
   // implementation(libs.firebase.ai)
   // implementation(libs.firebase.appcheck.recaptcha)
   // implementation(libs.firebase.appcheck.debug)

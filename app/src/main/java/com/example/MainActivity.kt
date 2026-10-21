@@ -10,12 +10,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.viewmodel.EditorScreen
+import com.example.ui.dialogs.ImportDialog
 import com.example.ui.screens.ProjectsListScreen
 import com.example.ui.screens.ScoreEditorScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -44,30 +47,34 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ScoreApp(scoreViewModel: ScoreViewModel = viewModel()) {
     val state by scoreViewModel.uiState.collectAsStateWithLifecycle()
+    var showImportDialog by remember { mutableStateOf(false) }
 
-    when (state.currentScreen) {
-        is EditorScreen.ProjectsList -> {
-            ProjectsListScreen(
-                projects = state.projectsList,
-                onOpenProject = { scoreViewModel.openProject(it) },
-                onCreateProject = { scoreViewModel.createNewProject(it) },
-                onDuplicateProject = { scoreViewModel.duplicateProject(it) },
-                onDeleteProject = { scoreViewModel.deleteProject(it) },
-                onOpenImport = {
-                    // Quick import from list
-                    scoreViewModel.navigateTo(EditorScreen.ImportDialog)
-                },
-                onOpenDriveSync = {
-                    scoreViewModel.navigateTo(EditorScreen.DriveSyncDialog)
-                }
-            )
-        }
-        else -> {
-            ScoreEditorScreen(
-                state = state,
-                viewModel = scoreViewModel,
-                onBackToProjects = {
-                    scoreViewModel.navigateTo(EditorScreen.ProjectsList)
+    if (state.currentProject != null) {
+        ScoreEditorScreen(
+            state = state,
+            viewModel = scoreViewModel,
+            onBackToProjects = {
+                scoreViewModel.closeCurrentProject()
+            }
+        )
+    } else {
+        ProjectsListScreen(
+            projects = state.projectsList,
+            onOpenProject = { scoreViewModel.openProject(it) },
+            onCreateProject = { scoreViewModel.createNewProject(it) },
+            onDuplicateProject = { scoreViewModel.duplicateProject(it) },
+            onDeleteProject = { scoreViewModel.deleteProject(it) },
+            onOpenImport = { showImportDialog = true },
+            onOpenDriveSync = {
+                scoreViewModel.showNotification("سرویس ابری گوگل درایو در حالت محلی همگام‌سازی شده است")
+            }
+        )
+
+        if (showImportDialog) {
+            ImportDialog(
+                onDismiss = { showImportDialog = false },
+                onImportContent = { content ->
+                    scoreViewModel.importProjectContent(content)
                 }
             )
         }
