@@ -80,19 +80,6 @@ fun ScoreCanvasView(
         val renderedWidthPx = pageW * fitScale
         val renderedHeightPx = pageH * fitScale
 
-        // Helper to convert screen pointer touch into exact page logical coordinates
-        fun screenToLogical(screenX: Float, screenY: Float): Pair<Float, Float> {
-            val dx = screenX - (containerWidthPx / 2f) - panOffsetX
-            val dy = screenY - (containerHeightPx / 2f) - panOffsetY
-            val paperDx = dx / zoomScale
-            val paperDy = dy / zoomScale
-            val localX = paperDx + (renderedWidthPx / 2f)
-            val localY = paperDy + (renderedHeightPx / 2f)
-            val logicalX = (localX / renderedWidthPx) * pageW
-            val logicalY = (localY / renderedHeightPx) * pageH
-            return logicalX to logicalY
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -100,7 +87,19 @@ fun ScoreCanvasView(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val downPos = down.position
-                        val (downLogicalX, downLogicalY) = screenToLogical(downPos.x, downPos.y)
+                        val (downLogicalX, downLogicalY) = com.example.editor.ScoreTransformMath.screenToLogical(
+                            screenX = downPos.x,
+                            screenY = downPos.y,
+                            containerWidthPx = containerWidthPx,
+                            containerHeightPx = containerHeightPx,
+                            renderedWidthPx = renderedWidthPx,
+                            renderedHeightPx = renderedHeightPx,
+                            pageW = pageW,
+                            pageH = pageH,
+                            zoomScale = zoomScale,
+                            panOffsetX = panOffsetX,
+                            panOffsetY = panOffsetY
+                        )
 
                         // Check if down was on a selected symbol or any symbol on page
                         val hitSymbol = page.symbols.lastOrNull { sym ->
@@ -116,28 +115,47 @@ fun ScoreCanvasView(
 
                         var prevCentroid = downPos
                         var prevDistance = 0f
+                        var lastSingleFingerPos = downPos
                         var currentZoom = zoomScale
                         var currentPanX = panOffsetX
                         var currentPanY = panOffsetY
                         var totalDragDistance = 0f
+                        var prevPointerCount = 1
 
                         while (true) {
                             val event = awaitPointerEvent()
                             val activePointers = event.changes.filter { it.pressed }
+                            val pointerCount = activePointers.size
 
-                            if (activePointers.isEmpty()) {
+                            if (pointerCount == 0) {
                                 // All pointers released
-                                if (!isDragging && !isTransforming && totalDragDistance < 15f) {
-                                    // Clean tap!
+                                if (!isDragging && !isTransforming && totalDragDistance < 12f) {
+                                    // Clean tap on canvas
                                     onCanvasTap(downLogicalX, downLogicalY)
-                                } else if (isDragging && isSymbolDrag) {
+                                } else if (isDragging && isSymbolDrag && !isTransforming) {
                                     onSymbolDragFinished()
                                 }
                                 break
                             }
 
-                            if (activePointers.size >= 2) {
-                                // Two fingers: Pinch to zoom and 2-finger pan
+                            // Handle transitions between single-finger and multi-finger safely without jumps
+                            if (pointerCount != prevPointerCount) {
+                                if (pointerCount >= 2) {
+                                    isTransforming = true
+                                    val p1 = activePointers[0].position
+                                    val p2 = activePointers[1].position
+                                    prevDistance = (p1 - p2).getDistance()
+                                    prevCentroid = (p1 + p2) / 2f
+                                } else if (pointerCount == 1) {
+                                    lastSingleFingerPos = activePointers[0].position
+                                }
+                                prevPointerCount = pointerCount
+                                event.changes.forEach { it.consume() }
+                                continue
+                            }
+
+                            if (pointerCount >= 2) {
+                                // Two fingers: Smooth pinch-to-zoom and focal-point pan
                                 isTransforming = true
                                 isDragging = false
                                 val p1 = activePointers[0].position
@@ -145,41 +163,78 @@ fun ScoreCanvasView(
                                 val currentDistance = (p1 - p2).getDistance()
                                 val currentCentroid = (p1 + p2) / 2f
 
-                                if (prevDistance > 0f && currentDistance > 0f) {
+                                if (prevDistance > 5f && currentDistance > 5f) {
                                     val zoomFactor = currentDistance / prevDistance
-                                    val newZoom = (currentZoom * zoomFactor).coerceIn(0.5f, 4.0f)
-                                    val factorChange = newZoom / currentZoom
+                                    if (zoomFactor.isFinite() && zoomFactor > 0f) {
+                                        val newZoom = (currentZoom * zoomFactor).coerceIn(
+                                            com.example.editor.ScoreTransformMath.MIN_ZOOM,
+                                            com.example.editor.ScoreTransformMath.MAX_ZOOM
+                                        )
+                                        val panDelta = currentCentroid - prevCentroid
 
-                                    val panDelta = currentCentroid - prevCentroid
-                                    currentPanX = (currentPanX + panDelta.x) * factorChange + (1f - factorChange) * (currentCentroid.x - containerWidthPx / 2f)
-                                    currentPanY = (currentPanY + panDelta.y) * factorChange + (1f - factorChange) * (currentCentroid.y - containerHeightPx / 2f)
-                                    currentZoom = newZoom
+                                        val (anchoredPanX, anchoredPanY) = com.example.editor.ScoreTransformMath.calculateZoomAnchor(
+                                            oldZoom = currentZoom,
+                                            newZoom = newZoom,
+                                            oldPanX = currentPanX,
+                                            oldPanY = currentPanY,
+                                            centroidX = currentCentroid.x,
+                                            centroidY = currentCentroid.y,
+                                            containerWidthPx = containerWidthPx,
+                                            containerHeightPx = containerHeightPx,
+                                            panDeltaX = panDelta.x,
+                                            panDeltaY = panDelta.y
+                                        )
 
-                                    onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                        val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
+                                            panX = anchoredPanX,
+                                            panY = anchoredPanY,
+                                            containerWidthPx = containerWidthPx,
+                                            containerHeightPx = containerHeightPx,
+                                            renderedWidthPx = renderedWidthPx,
+                                            renderedHeightPx = renderedHeightPx,
+                                            zoomScale = newZoom
+                                        )
+
+                                        currentZoom = newZoom
+                                        currentPanX = clampedX
+                                        currentPanY = clampedY
+
+                                        onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                    }
                                 }
 
                                 prevDistance = currentDistance
                                 prevCentroid = currentCentroid
                                 event.changes.forEach { it.consume() }
-                            } else if (activePointers.size == 1 && !isTransforming) {
-                                // Single finger: drag symbol or pan canvas
+                            } else if (pointerCount == 1) {
                                 val change = activePointers[0]
-                                val dragDelta = change.position - change.previousPosition
+                                val currentPos = change.position
+                                val dragDelta = currentPos - lastSingleFingerPos
+                                lastSingleFingerPos = currentPos
                                 totalDragDistance += dragDelta.getDistance()
 
-                                if (totalDragDistance > 10f) {
+                                if (totalDragDistance > 12f) {
                                     isDragging = true
                                     change.consume()
 
-                                    if (isSymbolDrag && activePaletteSymbol == null && activeCustomSymbol == null) {
-                                        // Drag symbol in logical units
+                                    if (isSymbolDrag && !isTransforming) {
+                                        // Drag symbol in logical score coordinates
                                         val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
                                         val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
                                         onSymbolDrag(deltaLogicalX, deltaLogicalY)
                                     } else {
                                         // Pan the canvas
-                                        currentPanX += dragDelta.x
-                                        currentPanY += dragDelta.y
+                                        val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
+                                            panX = currentPanX + dragDelta.x,
+                                            panY = currentPanY + dragDelta.y,
+                                            containerWidthPx = containerWidthPx,
+                                            containerHeightPx = containerHeightPx,
+                                            renderedWidthPx = renderedWidthPx,
+                                            renderedHeightPx = renderedHeightPx,
+                                            zoomScale = currentZoom
+                                        )
+                                        currentPanX = clampedX
+                                        currentPanY = clampedY
                                         onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
                                     }
                                 }

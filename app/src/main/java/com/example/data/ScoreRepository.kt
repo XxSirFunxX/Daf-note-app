@@ -305,8 +305,13 @@ class ScoreRepository(
         val all = dao.getAllNoteDefinitions().firstOrNull() ?: emptyList()
         val target = all.find { it.id == id }
         target?.imagePath?.let { path ->
-            val otherReferences = all.any { it.id != id && it.imagePath == path }
-            if (!otherReferences) {
+            val otherNoteDefRefs = all.any { it.id != id && it.imagePath == path }
+            val customSymbolRefs = dao.getAllCustomSymbols().firstOrNull()?.any { it.imagePath == path } ?: false
+            val projectRefs = dao.getAllProjects().firstOrNull()?.any { p ->
+                val content = p.jsonContent.replace("\\/", "/")
+                content.contains(path)
+            } ?: false
+            if (!otherNoteDefRefs && !customSymbolRefs && !projectRefs) {
                 try { File(path).delete() } catch (ignored: Exception) {}
             }
         }

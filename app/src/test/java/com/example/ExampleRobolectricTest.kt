@@ -11,13 +11,18 @@ import com.example.model.ScoreSymbol
 import com.example.model.SymbolType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import androidx.room.Room
+import com.example.data.AppDatabase
+import com.example.data.ScoreRepository
 import java.io.File
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -404,6 +409,92 @@ class ExampleRobolectricTest {
         for (i in 0 until 15) {
             assertTrue(staves[i].line4Y < staves[i + 1].line1Y)
         }
+    }
+
+    @Test
+    fun testDeleteDefaultNoteDefinition_PersistsWithoutRecreation() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        // Ensure defaults are populated on first start
+        repo.ensureDefaultNoteDefinitions()
+        val initialDefs = dao.getAllNoteDefinitions().first()
+        assertTrue(initialDefs.isNotEmpty())
+        val wholeDef = initialDefs.find { it.id == "DEF_WHOLE" }
+        assertNotNull("Default note DEF_WHOLE should exist initially", wholeDef)
+        assertTrue(wholeDef?.isDefault == true)
+
+        // Delete the default note definition permanently
+        repo.deleteNoteDefinition("DEF_WHOLE")
+        val afterDeletion = dao.getAllNoteDefinitions().first()
+        val deletedCheck = afterDeletion.find { it.id == "DEF_WHOLE" }
+        assertNull("DEF_WHOLE must be deleted from database", deletedCheck)
+
+        // Simulate app restart: ensureDefaultNoteDefinitions called again
+        repo.ensureDefaultNoteDefinitions()
+        val afterRestart = dao.getAllNoteDefinitions().first()
+        val restartedCheck = afterRestart.find { it.id == "DEF_WHOLE" }
+        assertNull("DEF_WHOLE must remain permanently deleted and NOT be re-seeded", restartedCheck)
+
+        db.close()
+    }
+
+    @Test
+    fun testDeleteNoteDefinition_PreservesScoreSymbolsAndSharedImages() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        // Create a custom image file in filesDir
+        val imagesDir = File(context.filesDir, "custom_notes").apply { mkdirs() }
+        val testImageFile = File(imagesDir, "test_shared_note.png").apply {
+            writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47))
+        }
+
+        // Add a note definition using this image
+        val def = repo.addNoteDefinition("نت ویژه تصویردار", SymbolType.CUSTOM_SYMBOL, "NOTES", "1/4", false, null)
+        val defWithImage = def.copy(imagePath = testImageFile.absolutePath)
+        dao.updateNoteDefinition(defWithImage)
+
+        // Create a project score that references this image in a placed symbol
+        val placedSymbol = ScoreSymbol(
+            type = SymbolType.CUSTOM_SYMBOL,
+            x = 200f,
+            y = 300f,
+            imagePath = testImageFile.absolutePath
+        )
+        val projectWithSymbol = ScoreProject(
+            id = "proj_test_delete_safety",
+            title = "پروژه حفظ نماد",
+            pages = listOf(ScorePage(symbols = listOf(placedSymbol)))
+        )
+        repo.saveProject(projectWithSymbol)
+
+        // Delete the note definition from library
+        repo.deleteNoteDefinition(def.id)
+
+        // 1. Definition must be removed from definition library
+        val allDefs = dao.getAllNoteDefinitions().first()
+        assertNull(allDefs.find { it.id == def.id })
+
+        // 2. The physical image file must NOT be deleted because it is still referenced in the project score
+        assertTrue("Image file must remain on disk while referenced by project scores", testImageFile.exists())
+
+        // 3. The project score and its symbols must be intact
+        val loadedProject = repo.allProjects.first().find { it.id == "proj_test_delete_safety" }
+        assertNotNull(loadedProject)
+        val loadedSymbol = loadedProject?.pages?.first()?.symbols?.first()
+        assertEquals(placedSymbol.id, loadedSymbol?.id)
+        assertEquals(testImageFile.absolutePath, loadedSymbol?.imagePath)
+
+        db.close()
     }
 }
 

@@ -280,7 +280,7 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
     fun setZoomAndPan(zoom: Float, panX: Float, panY: Float) {
         _uiState.update {
             it.copy(
-                zoomScale = zoom.coerceIn(0.5f, 3.5f),
+                zoomScale = zoom.coerceIn(com.example.editor.ScoreTransformMath.MIN_ZOOM, com.example.editor.ScoreTransformMath.MAX_ZOOM),
                 panOffsetX = panX,
                 panOffsetY = panY
             )
@@ -878,6 +878,48 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             showNotification("فایل پروژه با موفقیت صادر شد")
         } catch (e: Exception) {
             showNotification("خطا در صدور پروژه: ${e.localizedMessage}")
+        }
+    }
+
+    fun savePdfToUri(context: Context, uri: Uri) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val ok = ScoreExporter.writePdfToUri(context, uri, project)
+            if (ok) {
+                showNotification("فایل PDF با موفقیت در محل انتخابی ذخیره شد")
+            } else {
+                showNotification("خطا در ذخیره‌سازی فایل PDF در مسیر انتخابی")
+            }
+        } catch (e: Exception) {
+            showNotification("خطا در نوشتن فایل PDF: ${e.localizedMessage}")
+        }
+    }
+
+    fun saveImageToUri(context: Context, uri: Uri, isPng: Boolean = true) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val ok = ScoreExporter.writeImageToUri(context, uri, project.activePage, isPng = isPng)
+            if (ok) {
+                showNotification("تصویر صفحه با موفقیت در محل انتخابی ذخیره شد")
+            } else {
+                showNotification("خطا در ذخیره‌سازی تصویر در مسیر انتخابی")
+            }
+        } catch (e: Exception) {
+            showNotification("خطا در ذخیره تصویر: ${e.localizedMessage}")
+        }
+    }
+
+    fun saveProjectToUri(context: Context, uri: Uri) {
+        val project = _uiState.value.currentProject ?: return
+        try {
+            val ok = ScoreExporter.writeProjectToUri(context, uri, project)
+            if (ok) {
+                showNotification("فایل پروژه (.dafnt) با موفقیت در محل انتخابی ذخیره شد")
+            } else {
+                showNotification("خطا در ذخیره فایل پروژه")
+            }
+        } catch (e: Exception) {
+            showNotification("خطا در ذخیره پروژه: ${e.localizedMessage}")
         }
     }
 

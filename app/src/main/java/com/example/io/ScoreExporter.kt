@@ -269,6 +269,22 @@ object ScoreExporter {
     }
 
     /**
+     * Writes project JSON/dafnt directly to a user-selected destination URI.
+     */
+    fun writeProjectToUri(context: Context, uri: Uri, project: ScoreProject): Boolean {
+        return try {
+            val json = projectToJson(project)
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
      * Helper to share any generated file via Android's native share sheet.
      */
     fun shareFile(context: Context, file: File, mimeType: String, chooserTitle: String) {

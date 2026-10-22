@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -73,7 +72,6 @@ fun ProjectsListScreen(
     onDuplicateProject: (ScoreProject) -> Unit,
     onDeleteProject: (ScoreProject) -> Unit,
     onOpenImport: () -> Unit,
-    onOpenDriveSync: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -125,9 +123,6 @@ fun ProjectsListScreen(
                 actions = {
                     IconButton(onClick = onOpenImport, modifier = Modifier.testTag("btn_import_file")) {
                         Icon(Icons.Default.FileUpload, contentDescription = "وارد کردن فایل")
-                    }
-                    IconButton(onClick = onOpenDriveSync, modifier = Modifier.testTag("btn_sync_drive")) {
-                        Icon(Icons.Default.CloudDone, contentDescription = "همگام‌سازی ابری")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

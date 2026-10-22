@@ -197,7 +197,10 @@ fun ScoreEditorScreen(
             onDismiss = { showExportDialog = false },
             onExportPdf = { viewModel.exportToPdf(context) },
             onExportImage = { isPng -> viewModel.exportActivePageImage(context, isPng) },
-            onExportProjectFile = { viewModel.exportProjectFile(context) }
+            onExportProjectFile = { viewModel.exportProjectFile(context) },
+            onSavePdfToUri = { uri -> viewModel.savePdfToUri(context, uri) },
+            onSaveImageToUri = { uri, isPng -> viewModel.saveImageToUri(context, uri, isPng) },
+            onSaveProjectToUri = { uri -> viewModel.saveProjectToUri(context, uri) }
         )
     }
 

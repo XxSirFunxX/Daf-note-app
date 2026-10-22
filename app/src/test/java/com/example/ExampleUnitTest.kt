@@ -108,4 +108,146 @@ class ExampleUnitTest {
         assertNotNull(redone)
         assertEquals(2, redone?.size)
     }
+
+    @Test
+    fun testScoreTransformMath_BidirectionalConversionExactInverse() {
+        val containerW = 1080f
+        val containerH = 1920f
+        val renderedW = 800f
+        val renderedH = 1131.42f
+        val pageW = 1000f
+        val pageH = 1414.28f
+
+        val testZooms = listOf(0.2f, 0.5f, 1.0f, 2.5f, 5.0f, 8.0f)
+        val testPans = listOf(0f to 0f, 150f to -200f, -400f to 300f)
+
+        for (z in testZooms) {
+            for ((px, py) in testPans) {
+                // Test multiple arbitrary logical points
+                val testLogicalPoints = listOf(
+                    0f to 0f,
+                    500f to 707f,
+                    100f to 250f,
+                    900f to 1300f
+                )
+
+                for ((lx, ly) in testLogicalPoints) {
+                    val (screenX, screenY) = com.example.editor.ScoreTransformMath.logicalToScreen(
+                        logicalX = lx,
+                        logicalY = ly,
+                        containerWidthPx = containerW,
+                        containerHeightPx = containerH,
+                        renderedWidthPx = renderedW,
+                        renderedHeightPx = renderedH,
+                        pageW = pageW,
+                        pageH = pageH,
+                        zoomScale = z,
+                        panOffsetX = px,
+                        panOffsetY = py
+                    )
+
+                    val (invertedLx, invertedLy) = com.example.editor.ScoreTransformMath.screenToLogical(
+                        screenX = screenX,
+                        screenY = screenY,
+                        containerWidthPx = containerW,
+                        containerHeightPx = containerH,
+                        renderedWidthPx = renderedW,
+                        renderedHeightPx = renderedH,
+                        pageW = pageW,
+                        pageH = pageH,
+                        zoomScale = z,
+                        panOffsetX = px,
+                        panOffsetY = py
+                    )
+
+                    assertEquals("Logical X mismatch at zoom $z", lx, invertedLx, 0.05f)
+                    assertEquals("Logical Y mismatch at zoom $z", ly, invertedLy, 0.05f)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testScoreTransformMath_ZoomAnchorMaintainsFocalPoint() {
+        val containerW = 1000f
+        val containerH = 1500f
+        val renderedW = 800f
+        val renderedH = 1131f
+        val pageW = 1000f
+        val pageH = 1414f
+
+        val oldZoom = 1.0f
+        val newZoom = 2.5f
+        val oldPanX = 50f
+        val oldPanY = -80f
+        val centroidX = 650f
+        val centroidY = 400f
+
+        // Logical point before zoom directly under the user's fingers (centroid)
+        val (logicalBeforeX, logicalBeforeY) = com.example.editor.ScoreTransformMath.screenToLogical(
+            screenX = centroidX,
+            screenY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = oldZoom,
+            panOffsetX = oldPanX,
+            panOffsetY = oldPanY
+        )
+
+        // Calculate new pan with anchor
+        val (newPanX, newPanY) = com.example.editor.ScoreTransformMath.calculateZoomAnchor(
+            oldZoom = oldZoom,
+            newZoom = newZoom,
+            oldPanX = oldPanX,
+            oldPanY = oldPanY,
+            centroidX = centroidX,
+            centroidY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            panDeltaX = 0f,
+            panDeltaY = 0f
+        )
+
+        // Logical point after zoom under the exact same screen touch location
+        val (logicalAfterX, logicalAfterY) = com.example.editor.ScoreTransformMath.screenToLogical(
+            screenX = centroidX,
+            screenY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = newZoom,
+            panOffsetX = newPanX,
+            panOffsetY = newPanY
+        )
+
+        assertEquals("Focal point X must remain stationary during pinch-to-zoom", logicalBeforeX, logicalAfterX, 0.01f)
+        assertEquals("Focal point Y must remain stationary during pinch-to-zoom", logicalBeforeY, logicalAfterY, 0.01f)
+    }
+
+    @Test
+    fun testScoreTransformMath_ZoomRangeSafeguards() {
+        assertEquals(0.2f, com.example.editor.ScoreTransformMath.MIN_ZOOM, 0.001f)
+        assertEquals(8.0f, com.example.editor.ScoreTransformMath.MAX_ZOOM, 0.001f)
+
+        // Verify that invalid/infinite zooms are handled safely
+        val (safePanX, safePanY) = com.example.editor.ScoreTransformMath.calculateZoomAnchor(
+            oldZoom = Float.NaN,
+            newZoom = 2f,
+            oldPanX = 10f,
+            oldPanY = 20f,
+            centroidX = 100f,
+            centroidY = 100f,
+            containerWidthPx = 500f,
+            containerHeightPx = 500f
+        )
+        assertEquals(10f, safePanX, 0.001f)
+        assertEquals(20f, safePanY, 0.001f)
+    }
 }

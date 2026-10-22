@@ -64,10 +64,7 @@ fun ScoreApp(scoreViewModel: ScoreViewModel = viewModel()) {
             onCreateProject = { scoreViewModel.createNewProject(it) },
             onDuplicateProject = { scoreViewModel.duplicateProject(it) },
             onDeleteProject = { scoreViewModel.deleteProject(it) },
-            onOpenImport = { showImportDialog = true },
-            onOpenDriveSync = {
-                scoreViewModel.showNotification("سرویس ابری گوگل درایو در حالت محلی همگام‌سازی شده است")
-            }
+            onOpenImport = { showImportDialog = true }
         )
 
         if (showImportDialog) {

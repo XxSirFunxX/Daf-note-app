@@ -381,92 +381,238 @@ fun ExportDialog(
     onDismiss: () -> Unit,
     onExportPdf: () -> Unit,
     onExportImage: (Boolean) -> Unit,
-    onExportProjectFile: () -> Unit
+    onExportProjectFile: () -> Unit,
+    onSavePdfToUri: (Uri) -> Unit = {},
+    onSaveImageToUri: (Uri, Boolean) -> Unit = { _, _ -> },
+    onSaveProjectToUri: (Uri) -> Unit = {}
 ) {
+    var selectedExportTab by remember { mutableIntStateOf(0) } // 0: Save to Device (SAF), 1: Share
+
+    val savePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onSavePdfToUri(uri)
+            onDismiss()
+        }
+    }
+
+    val savePngLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/png")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onSaveImageToUri(uri, true)
+            onDismiss()
+        }
+    }
+
+    val saveJpgLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/jpeg")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onSaveImageToUri(uri, false)
+            onDismiss()
+        }
+    }
+
+    val saveProjectLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onSaveProjectToUri(uri)
+            onDismiss()
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("خروجی گرفتن از پروژه", fontWeight = FontWeight.Bold) },
+        title = {
+            Column {
+                Text("خروجی و ذخیره‌سازی پروژه", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+                TabRow(selectedTabIndex = selectedExportTab) {
+                    Tab(
+                        selected = selectedExportTab == 0,
+                        onClick = { selectedExportTab = 0 },
+                        text = { Text("ذخیره در دستگاه (SAF)", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                    )
+                    Tab(
+                        selected = selectedExportTab == 1,
+                        onClick = { selectedExportTab = 1 },
+                        text = { Text("اشتراک‌گذاری مستقیم", fontSize = 12.sp) }
+                    )
+                }
+            }
+        },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // PDF
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onExportPdf(); onDismiss() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                if (selectedExportTab == 0) {
+                    Text(
+                        text = "فایل را در پوشه دلخواه روی حافظه دستگاه با نام انتخابی ذخیره کنید:",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+
+                    // Save PDF to Device
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val cleanTitle = project.title.replace(" ", "_")
+                                savePdfLauncher.launch("$cleanTitle.pdf")
+                            }
+                            .testTag("btn_save_pdf_device")
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("خروجی PDF چاپی", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("سایز دقیق A4/A3، تمام صفحات، کیفیت برداری", fontSize = 11.sp, color = Color.Gray)
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("ذخیره PDF در دستگاه", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("انتخاب پوشه و نام فایل چاپی با کیفیت برداری", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
-                }
 
-                // PNG
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onExportImage(true); onDismiss() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Save PNG Image to Device
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val cleanTitle = project.title.replace(" ", "_")
+                                savePngLauncher.launch("${cleanTitle}_page_${project.activePage.pageNumber}.png")
+                            }
+                            .testTag("btn_save_image_png_device")
                     ) {
-                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF1565C0), modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("خروجی تصویر PNG", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("صفحه فعلی با کیفیت و وضوح بالا برای اشتراک‌گذاری", fontSize = 11.sp, color = Color.Gray)
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF1565C0), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("ذخیره تصویر PNG در دستگاه", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("تصویر شفاف با وضوح بالا در پوشه دلخواه شما", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
-                }
 
-                // JPG
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onExportImage(false); onDismiss() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Save JPG Image to Device
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val cleanTitle = project.title.replace(" ", "_")
+                                saveJpgLauncher.launch("${cleanTitle}_page_${project.activePage.pageNumber}.jpg")
+                            }
+                            .testTag("btn_save_image_jpg_device")
                     ) {
-                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("خروجی تصویر JPG", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("حجم کم‌تر مناسب پیام‌رسان‌ها", fontSize = 11.sp, color = Color.Gray)
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("ذخیره تصویر JPG در دستگاه", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("حجم بهینه برای بایگانی و استفاده روزمره", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
-                }
 
-                // Editable Project File
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onExportProjectFile(); onDismiss() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Save Project File to Device
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val cleanTitle = project.title.replace(" ", "_")
+                                saveProjectLauncher.launch("$cleanTitle.dafnt")
+                            }
+                            .testTag("btn_save_project_device")
                     ) {
-                        Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("فایل پروژه قابل ویرایش (.dafnt)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("ذخیره و صدور با فرمت استاندارد .dafnt (سازگار با .chaharkhat)", fontSize = 11.sp, color = Color.Gray)
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("ذخیره فایل پروژه (.dafnt) در دستگاه", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("فایل کامل قابل ویرایش و تبادل میان دستگاه‌ها", fontSize = 11.sp, color = Color.Gray)
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "ارسال مستقیم فایل به پیام‌رسان‌ها یا برنامه‌های دیگر:",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+
+                    // Share PDF
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onExportPdf(); onDismiss() }
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("اشتراک‌گذاری PDF چاپی", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("تمام صفحات، آماده چاپ در سایز A4/A3", fontSize = 11.sp, color = Color.Gray)
+                            }
+                        }
+                    }
+
+                    // Share PNG
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onExportImage(true); onDismiss() }
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF1565C0), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("اشتراک‌گذاری تصویر PNG", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("کیفیت بالا برای ارسال در شبکه‌های اجتماعی", fontSize = 11.sp, color = Color.Gray)
+                            }
+                        }
+                    }
+
+                    // Share JPG
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onExportImage(false); onDismiss() }
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("اشتراک‌گذاری تصویر JPG", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("حجم فشرده‌تر برای ارسال سریع", fontSize = 11.sp, color = Color.Gray)
+                            }
+                        }
+                    }
+
+                    // Share Project File
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onExportProjectFile(); onDismiss() }
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("اشتراک‌گذاری فایل پروژه (.dafnt)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("ارسال فایل ویرایش‌پذیر به همکاران یا هنرجویان", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
                 }
@@ -614,9 +760,7 @@ fun ImportDialog(
 }
 
 // ==========================================
-// 5. GOOGLE DRIVE SYNC DIALOG
-
-// 6. CUSTOM SYMBOLS COMPREHENSIVE MANAGER
+// 5. CUSTOM SYMBOLS COMPREHENSIVE MANAGER
 // ==========================================
 
 @Composable
@@ -1531,14 +1675,12 @@ fun NoteDefinitionsManagerDialog(
                                             Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                         }
 
-                                        // Delete button (only for non-default)
-                                        if (!noteDef.isDefault) {
-                                            IconButton(
-                                                onClick = { defToDelete = noteDef },
-                                                modifier = Modifier.size(30.dp)
-                                            ) {
-                                                Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                            }
+                                        // Delete button (for all definitions including defaults)
+                                        IconButton(
+                                            onClick = { defToDelete = noteDef },
+                                            modifier = Modifier.size(30.dp)
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                                         }
 
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -1786,8 +1928,22 @@ fun NoteDefinitionsManagerDialog(
         val def = defToDelete!!
         AlertDialog(
             onDismissRequest = { defToDelete = null },
-            title = { Text("حذف تعریف نت") },
-            text = { Text("آیا از حذف تعریف '${def.name}' اطمینان دارید؟") },
+            title = {
+                Text(
+                    text = if (def.isDefault) "حذف تعریف اصلی نت" else "حذف تعریف نت",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = if (def.isDefault) {
+                        "آیا از حذف تعریف اصلی '${def.name}' اطمینان دارید؟\nاین نت از کتابخانه و پالت نمادها حذف خواهد شد، اما نمادهایی که پیش‌تر در صفحات قطعه قرار گرفته‌اند به طور کامل حفظ می‌شوند."
+                    } else {
+                        "آیا از حذف تعریف '${def.name}' اطمینان دارید؟"
+                    },
+                    fontSize = 13.sp
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
