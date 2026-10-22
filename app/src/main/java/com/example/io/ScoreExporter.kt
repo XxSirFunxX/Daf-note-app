@@ -100,9 +100,9 @@ object ScoreExporter {
      */
     fun writeProjectToUri(context: Context, uri: Uri, project: ScoreProject): Boolean {
         return try {
+            val json = projectToJson(project)
             context.contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(projectToJson(project).toByteArray(Charsets.UTF_8))
-                out.flush()
+                out.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
             }
             true
         } catch (e: Exception) {
@@ -261,22 +261,6 @@ object ScoreExporter {
                 bitmap.compress(compressFormat, quality, out)
             }
             bitmap.recycle()
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    /**
-     * Writes project JSON/dafnt directly to a user-selected destination URI.
-     */
-    fun writeProjectToUri(context: Context, uri: Uri, project: ScoreProject): Boolean {
-        return try {
-            val json = projectToJson(project)
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                out.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
-            }
             true
         } catch (e: Exception) {
             e.printStackTrace()
