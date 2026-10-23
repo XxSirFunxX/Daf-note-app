@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,17 @@ fun ScoreCanvasView(
 ) {
     val density = LocalDensity.current
 
+    val currentZoomScale by rememberUpdatedState(zoomScale)
+    val currentPanOffsetX by rememberUpdatedState(panOffsetX)
+    val currentPanOffsetY by rememberUpdatedState(panOffsetY)
+    val currentSelectedSymbolIds by rememberUpdatedState(selectedSymbolIds)
+    val currentActivePaletteSymbol by rememberUpdatedState(activePaletteSymbol)
+    val currentActiveCustomSymbol by rememberUpdatedState(activeCustomSymbol)
+    val currentOnZoomAndPanChange by rememberUpdatedState(onZoomAndPanChange)
+    val currentOnCanvasTap by rememberUpdatedState(onCanvasTap)
+    val currentOnSymbolDrag by rememberUpdatedState(onSymbolDrag)
+    val currentOnSymbolDragFinished by rememberUpdatedState(onSymbolDragFinished)
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
@@ -83,10 +95,14 @@ fun ScoreCanvasView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(page.id, selectedSymbolIds, activePaletteSymbol, activeCustomSymbol, zoomScale, panOffsetX, panOffsetY) {
+                .pointerInput(page.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val downPos = down.position
+                        var currentZoom = currentZoomScale
+                        var currentPanX = currentPanOffsetX
+                        var currentPanY = currentPanOffsetY
+
                         val (downLogicalX, downLogicalY) = com.example.editor.ScoreTransformMath.screenToLogical(
                             screenX = downPos.x,
                             screenY = downPos.y,
@@ -96,9 +112,9 @@ fun ScoreCanvasView(
                             renderedHeightPx = renderedHeightPx,
                             pageW = pageW,
                             pageH = pageH,
-                            zoomScale = zoomScale,
-                            panOffsetX = panOffsetX,
-                            panOffsetY = panOffsetY
+                            zoomScale = currentZoom,
+                            panOffsetX = currentPanX,
+                            panOffsetY = currentPanY
                         )
 
                         // Check if down was on a selected symbol or any symbol on page
@@ -110,15 +126,12 @@ fun ScoreCanvasView(
 
                         var isTransforming = false
                         var isDragging = false
-                        val isSymbolDrag = (hitSymbol != null || selectedSymbolIds.isNotEmpty()) &&
-                                           activePaletteSymbol == null && activeCustomSymbol == null
+                        val isSymbolDrag = (hitSymbol != null || currentSelectedSymbolIds.isNotEmpty()) &&
+                                           currentActivePaletteSymbol == null && currentActiveCustomSymbol == null
 
                         var prevCentroid = downPos
                         var prevDistance = 0f
                         var lastSingleFingerPos = downPos
-                        var currentZoom = zoomScale
-                        var currentPanX = panOffsetX
-                        var currentPanY = panOffsetY
                         var totalDragDistance = 0f
                         var prevPointerCount = 1
 
@@ -131,9 +144,9 @@ fun ScoreCanvasView(
                                 // All pointers released
                                 if (!isDragging && !isTransforming && totalDragDistance < 12f) {
                                     // Clean tap on canvas
-                                    onCanvasTap(downLogicalX, downLogicalY)
+                                    currentOnCanvasTap(downLogicalX, downLogicalY)
                                 } else if (isDragging && isSymbolDrag && !isTransforming) {
-                                    onSymbolDragFinished()
+                                    currentOnSymbolDragFinished()
                                 }
                                 break
                             }
@@ -142,11 +155,13 @@ fun ScoreCanvasView(
                             if (pointerCount != prevPointerCount) {
                                 if (pointerCount >= 2) {
                                     isTransforming = true
+                                    isDragging = false
                                     val p1 = activePointers[0].position
                                     val p2 = activePointers[1].position
                                     prevDistance = (p1 - p2).getDistance()
                                     prevCentroid = (p1 + p2) / 2f
                                 } else if (pointerCount == 1) {
+                                    isTransforming = false
                                     lastSingleFingerPos = activePointers[0].position
                                 }
                                 prevPointerCount = pointerCount
@@ -177,8 +192,8 @@ fun ScoreCanvasView(
                                             newZoom = newZoom,
                                             oldPanX = currentPanX,
                                             oldPanY = currentPanY,
-                                            centroidX = currentCentroid.x,
-                                            centroidY = currentCentroid.y,
+                                            centroidX = prevCentroid.x,
+                                            centroidY = prevCentroid.y,
                                             containerWidthPx = containerWidthPx,
                                             containerHeightPx = containerHeightPx,
                                             panDeltaX = panDelta.x,
@@ -199,7 +214,7 @@ fun ScoreCanvasView(
                                         currentPanX = clampedX
                                         currentPanY = clampedY
 
-                                        onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                        currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
                                     }
                                 }
 
@@ -221,7 +236,7 @@ fun ScoreCanvasView(
                                         // Drag symbol in logical score coordinates
                                         val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
                                         val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
-                                        onSymbolDrag(deltaLogicalX, deltaLogicalY)
+                                        currentOnSymbolDrag(deltaLogicalX, deltaLogicalY)
                                     } else {
                                         // Pan the canvas
                                         val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
@@ -235,7 +250,7 @@ fun ScoreCanvasView(
                                         )
                                         currentPanX = clampedX
                                         currentPanY = clampedY
-                                        onZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                        currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
                                     }
                                 }
                             }

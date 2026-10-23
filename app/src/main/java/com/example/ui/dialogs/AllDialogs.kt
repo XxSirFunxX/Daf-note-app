@@ -34,6 +34,12 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.example.io.BulkSymbolImporter
+import com.example.io.BulkImportPreview
+import com.example.io.BulkImportItem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -663,7 +669,7 @@ fun ImportDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "می‌توانید فایل پروژه (.dafnt، .chaharkhat، .musicxml، .json) را از حافظه دستگاه انتخاب کنید یا محتوای آن را وارد نمایید:",
+                    text = "می‌توانید فایل پروژه (.dafnt، .musicxml، .json) را از حافظه دستگاه انتخاب کنید یا محتوای آن را وارد نمایید:",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -773,10 +779,35 @@ fun CustomSymbolsManagerDialog(
     onUpdateCustom: (CustomSymbolEntity) -> Unit,
     onDeleteCustom: (String) -> Unit,
     onSelectForPlacement: (CustomSymbolEntity) -> Unit,
-    onReplaceImage: (CustomSymbolEntity, Uri) -> Unit = { _, _ -> }
+    onReplaceImage: (CustomSymbolEntity, Uri) -> Unit = { _, _ -> },
+    onBulkImport: ((List<BulkImportItem>, Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(if (customSymbols.isEmpty()) 0 else 1) }
+
+    // Bulk Import State
+    var bulkImportPreview by remember { mutableStateOf<BulkImportPreview?>(null) }
+    var isInspectingZip by remember { mutableStateOf(false) }
+    var bulkImportError by remember { mutableStateOf<String?>(null) }
+
+    val zipPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isInspectingZip = true
+            bulkImportError = null
+            coroutineScope.launch {
+                val res = BulkSymbolImporter.inspectZip(context, uri, customSymbols, categories)
+                isInspectingZip = false
+                if (res.isSuccess) {
+                    bulkImportPreview = res.getOrNull()
+                } else {
+                    bulkImportError = res.exceptionOrNull()?.localizedMessage ?: "خطا در پردازش فایل ZIP"
+                }
+            }
+        }
+    }
 
     // Creation State
     var name by remember { mutableStateOf("") }
@@ -890,6 +921,61 @@ fun CustomSymbolsManagerDialog(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        // Bulk ZIP Import Card
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    try {
+                                        zipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"))
+                                    } catch (e: Exception) {
+                                        bulkImportError = "عدم امکان باز کردن انتخابگر فایل: ${e.localizedMessage}"
+                                    }
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudUpload,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("درون‌ریزی دسته‌ای از فایل ZIP", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    Text("شامل manifest.json و تصاویر نمادها", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f))
+                                }
+                                if (isInspectingZip) {
+                                    Text("در حال بررسی...", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+
+                        if (bulkImportError != null) {
+                            Text(
+                                text = bulkImportError!!,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+
+                        // Divider text
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Spacer(modifier = Modifier.weight(1f).height(1.dp).background(Color.LightGray))
+                            Text("یا افزودن تکی", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(horizontal = 8.dp))
+                            Spacer(modifier = Modifier.weight(1f).height(1.dp).background(Color.LightGray))
+                        }
+
                         // Image Picker Card
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -1317,6 +1403,236 @@ fun CustomSymbolsManagerDialog(
             }
         )
     }
+
+    // Sub-dialog: Bulk Symbol Import Preview
+    if (bulkImportPreview != null) {
+        BulkSymbolImportDialog(
+            preview = bulkImportPreview!!,
+            categories = categories,
+            onDismiss = { bulkImportPreview = null },
+            onConfirmImport = { items, renameDuplicates ->
+                onBulkImport?.invoke(items, renameDuplicates)
+                bulkImportPreview = null
+            }
+        )
+    }
+}
+
+// ==========================================
+// 6. BULK SYMBOL IMPORT PREVIEW DIALOG
+// ==========================================
+
+@Composable
+fun BulkSymbolImportDialog(
+    preview: BulkImportPreview,
+    categories: List<CategoryEntity>,
+    onDismiss: () -> Unit,
+    onConfirmImport: (itemsToImport: List<BulkImportItem>, renameDuplicates: Boolean) -> Unit
+) {
+    var renameDuplicates by remember { mutableStateOf(true) }
+    var skipDuplicates by remember { mutableStateOf(false) }
+
+    val effectiveValidItems = if (skipDuplicates) {
+        preview.validItems.filter { !it.isDuplicate }
+    } else {
+        preview.validItems
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("پیش‌نمایش درون‌ریزی دسته‌ای نمادها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(380.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Summary cards row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("کل یافته‌ها", fontSize = 10.sp, color = Color.Gray)
+                            Text("${preview.totalFound}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+                    }
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("معتبر", fontSize = 10.sp, color = Color(0xFF2E7D32))
+                            Text("${preview.validItems.size}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF2E7D32))
+                        }
+                    }
+                    if (preview.duplicateCount > 0) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("تکراری", fontSize = 10.sp, color = Color(0xFFE65100))
+                                Text("${preview.duplicateCount}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFE65100))
+                            }
+                        }
+                    }
+                    if (preview.invalidItems.isNotEmpty()) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("نامعتبر", fontSize = 10.sp, color = Color(0xFFC62828))
+                                Text("${preview.invalidItems.size}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFFC62828))
+                            }
+                        }
+                    }
+                }
+
+                // Handling duplicates
+                if (preview.duplicateCount > 0) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("مدیریت نمادهای تکراری (${preview.duplicateCount} مورد):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFBF360C))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        renameDuplicates = true
+                                        skipDuplicates = false
+                                    }
+                            ) {
+                                RadioButton(selected = renameDuplicates && !skipDuplicates, onClick = { renameDuplicates = true; skipDuplicates = false })
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("تغییر نام موارد تکراری با پسوند «(کپی)»", fontSize = 11.sp)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        renameDuplicates = false
+                                        skipDuplicates = true
+                                    }
+                            ) {
+                                RadioButton(selected = skipDuplicates, onClick = { renameDuplicates = false; skipDuplicates = true })
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("نادیده گرفتن موارد تکراری (عدم افزودن)", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                // Valid items list
+                Text("نمادهای آماده درون‌ریزی (${effectiveValidItems.size} نماد):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    effectiveValidItems.forEach { item ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (item.previewBitmap != null) {
+                                    Image(
+                                        bitmap = item.previewBitmap.asImageBitmap(),
+                                        contentDescription = item.name,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(Color.White)
+                                            .border(1.dp, Color.LightGray, RoundedCornerShape(4.dp))
+                                    )
+                                } else {
+                                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(item.name, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        if (item.isDuplicate) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (renameDuplicates) "تکراری (کپی)" else "تکراری",
+                                                fontSize = 9.sp,
+                                                color = Color(0xFFE65100),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    val catTitle = categories.firstOrNull { it.id == item.categoryId }?.titleFa ?: item.categoryId
+                                    Text(catTitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Invalid items warning
+                if (preview.invalidItems.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("موارد رد شده (${preview.invalidItems.size} مورد):", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        preview.invalidItems.forEach { item ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(24.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(item.name, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFFC62828))
+                                        Text(item.validationError ?: "خطای ناشناخته", fontSize = 10.sp, color = Color.DarkGray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirmImport(effectiveValidItems, renameDuplicates)
+                },
+                enabled = effectiveValidItems.isNotEmpty()
+            ) {
+                Text("درون‌ریزی (${effectiveValidItems.size} نماد)")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("انصراف") }
+        }
+    )
 }
 
 // Simple fallback version
@@ -1391,15 +1707,22 @@ fun CustomSymbolDialog(
 @Composable
 fun CategoryManagerDialog(
     categories: List<CategoryEntity>,
+    customSymbols: List<CustomSymbolEntity> = emptyList(),
+    noteDefinitions: List<NoteDefinitionEntity> = emptyList(),
     onDismiss: () -> Unit,
     onAddCategory: (String) -> Unit,
     onUpdateCategory: (CategoryEntity) -> Unit,
-    onDeleteCategory: (String) -> Unit
+    onDeleteCategorySafely: (String) -> Unit,
+    onDeleteCategoryWithSymbols: (String) -> Unit = onDeleteCategorySafely,
+    onDeleteCategoryAndMoveSymbols: (String, String) -> Unit = { src, _ -> onDeleteCategorySafely(src) }
 ) {
     var newTitle by remember { mutableStateOf("") }
+    var addErrorMessage by remember { mutableStateOf<String?>(null) }
+
     var categoryToDelete by remember { mutableStateOf<CategoryEntity?>(null) }
     var categoryToEdit by remember { mutableStateOf<CategoryEntity?>(null) }
     var editTitle by remember { mutableStateOf("") }
+    var editErrorMessage by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1414,7 +1737,7 @@ fun CategoryManagerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(340.dp)
+                    .height(360.dp)
             ) {
                 // Add new category row
                 Row(
@@ -1423,23 +1746,42 @@ fun CategoryManagerDialog(
                 ) {
                     OutlinedTextField(
                         value = newTitle,
-                        onValueChange = { newTitle = it },
+                        onValueChange = {
+                            newTitle = it
+                            addErrorMessage = null
+                        },
                         label = { Text("نام دسته‌بندی جدید") },
                         singleLine = true,
+                        isError = addErrorMessage != null,
                         modifier = Modifier.weight(1f)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (newTitle.isNotBlank()) {
-                                onAddCategory(newTitle.trim())
-                                newTitle = ""
+                            val trimmed = newTitle.trim()
+                            if (trimmed.isNotBlank()) {
+                                if (categories.any { it.titleFa.trim().equals(trimmed, ignoreCase = true) }) {
+                                    addErrorMessage = "دسته‌بندی با این عنوان از قبل وجود دارد."
+                                } else {
+                                    onAddCategory(trimmed)
+                                    newTitle = ""
+                                    addErrorMessage = null
+                                }
                             }
                         },
                         enabled = newTitle.isNotBlank()
                     ) {
                         Text("افزودن")
                     }
+                }
+
+                if (addErrorMessage != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = addErrorMessage!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 11.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1451,6 +1793,9 @@ fun CategoryManagerDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(categories) { cat ->
+                        val symCount = customSymbols.count { it.categoryId == cat.id } +
+                                noteDefinitions.count { it.categoryId == cat.id }
+
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                             modifier = Modifier.fillMaxWidth()
@@ -1461,20 +1806,27 @@ fun CategoryManagerDialog(
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = cat.titleFa,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = cat.titleFa,
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = if (symCount > 0) "$symCount نماد در این دسته" else "بدون نماد",
+                                        fontSize = 10.sp,
+                                        color = if (symCount > 0) MaterialTheme.colorScheme.primary else Color.Gray
+                                    )
+                                }
 
                                 if (cat.isDefault) {
-                                    Text("پیش‌فرض", fontSize = 11.sp, color = Color.Gray)
+                                    Text("پیش‌فرض سیستم", fontSize = 11.sp, color = Color.Gray)
                                 } else {
                                     IconButton(
                                         onClick = {
                                             categoryToEdit = cat
                                             editTitle = cat.titleFa
+                                            editErrorMessage = null
                                         },
                                         modifier = Modifier.size(32.dp)
                                     ) {
@@ -1506,20 +1858,35 @@ fun CategoryManagerDialog(
             onDismissRequest = { categoryToEdit = null },
             title = { Text("ویرایش عنوان دسته‌بندی") },
             text = {
-                OutlinedTextField(
-                    value = editTitle,
-                    onValueChange = { editTitle = it },
-                    label = { Text("عنوان") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = {
+                            editTitle = it
+                            editErrorMessage = null
+                        },
+                        label = { Text("عنوان") },
+                        singleLine = true,
+                        isError = editErrorMessage != null,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (editErrorMessage != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(editErrorMessage!!, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (editTitle.isNotBlank()) {
-                            onUpdateCategory(cat.copy(titleFa = editTitle.trim()))
-                            categoryToEdit = null
+                        val trimmed = editTitle.trim()
+                        if (trimmed.isNotBlank()) {
+                            if (categories.any { it.id != cat.id && it.titleFa.trim().equals(trimmed, ignoreCase = true) }) {
+                                editErrorMessage = "دسته‌بندی دیگری با این عنوان وجود دارد."
+                            } else {
+                                onUpdateCategory(cat.copy(titleFa = trimmed))
+                                categoryToEdit = null
+                            }
                         }
                     },
                     enabled = editTitle.isNotBlank()
@@ -1536,25 +1903,148 @@ fun CategoryManagerDialog(
     // Delete Category modal
     if (categoryToDelete != null) {
         val cat = categoryToDelete!!
-        AlertDialog(
-            onDismissRequest = { categoryToDelete = null },
-            title = { Text("حذف دسته‌بندی") },
-            text = { Text("آیا از حذف دسته‌بندی '${cat.titleFa}' اطمینان دارید؟ تمام نمادهای داخل آن به دسته‌بندی عمومی منتقل خواهند شد.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onDeleteCategory(cat.id)
-                        categoryToDelete = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("بله، حذف شود")
+        val symCount = customSymbols.count { it.categoryId == cat.id } +
+                noteDefinitions.count { it.categoryId == cat.id }
+
+        if (symCount == 0) {
+            // Category is empty
+            AlertDialog(
+                onDismissRequest = { categoryToDelete = null },
+                title = { Text("حذف دسته‌بندی خالی") },
+                text = { Text("آیا از حذف دسته‌بندی '${cat.titleFa}' اطمینان دارید؟") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            onDeleteCategorySafely(cat.id)
+                            categoryToDelete = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("بله، حذف شود")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { categoryToDelete = null }) { Text("انصراف") }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { categoryToDelete = null }) { Text("انصراف") }
+            )
+        } else {
+            // Category has symbols inside
+            val otherCategories = categories.filter { it.id != cat.id }
+            var deleteOption by remember { mutableIntStateOf(0) } // 0: Move symbols, 1: Delete symbols with category
+            var selectedTargetCatId by remember {
+                mutableStateOf(otherCategories.firstOrNull { it.id == "NOTES" }?.id ?: otherCategories.firstOrNull()?.id ?: "")
             }
-        )
+
+            AlertDialog(
+                onDismissRequest = { categoryToDelete = null },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("حذف دسته‌بندی دارای نماد", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "دسته‌بندی '${cat.titleFa}' شامل $symCount نماد است. برای جلوگیری از حذف ناخواسته، نحوه مدیریت نمادها را انتخاب کنید:",
+                            fontSize = 12.sp,
+                            color = Color.DarkGray
+                        )
+
+                        // Option 0: Move symbols to another category
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (deleteOption == 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { deleteOption = 0 }
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = deleteOption == 0, onClick = { deleteOption = 0 })
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("انتقال نمادها به دسته‌بندی دیگر (توصیه‌شده)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                                if (deleteOption == 0 && otherCategories.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text("انتقال به دسته‌بندی:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        otherCategories.forEach { targetCat ->
+                                            FilterChip(
+                                                selected = selectedTargetCatId == targetCat.id,
+                                                onClick = { selectedTargetCatId = targetCat.id },
+                                                label = { Text(targetCat.titleFa, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Option 1: Delete all symbols inside category
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (deleteOption == 1) Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { deleteOption = 1 }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = deleteOption == 1, onClick = { deleteOption = 1 })
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text("حذف تمام نمادهای درون این دسته ($symCount نماد)", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFFC62828))
+                                    Text("نمادها همراه با دسته‌بندی برای همیشه حذف می‌شوند.", fontSize = 10.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (deleteOption == 0) {
+                        Button(
+                            onClick = {
+                                onDeleteCategoryAndMoveSymbols(cat.id, selectedTargetCatId)
+                                categoryToDelete = null
+                            },
+                            enabled = selectedTargetCatId.isNotBlank()
+                        ) {
+                            Text("انتقال نمادها و حذف دسته")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                onDeleteCategoryWithSymbols(cat.id)
+                                categoryToDelete = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("حذف کامل دسته و نمادها")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { categoryToDelete = null }) { Text("انصراف") }
+                }
+            )
+        }
     }
 }
 

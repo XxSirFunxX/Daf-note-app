@@ -805,6 +805,45 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteCategoryWithSymbols(categoryId: String) {
+        viewModelScope.launch {
+            repository.deleteCategoryWithSymbols(categoryId)
+            if (_uiState.value.activePaletteCategoryId == categoryId) {
+                selectCategory("NOTES")
+            }
+            showNotification("دسته‌بندی و تمام نمادهای آن حذف شدند")
+        }
+    }
+
+    fun deleteCategoryAndMoveSymbols(categoryId: String, targetCategoryId: String) {
+        viewModelScope.launch {
+            repository.deleteCategoryAndMoveSymbols(categoryId, targetCategoryId)
+            if (_uiState.value.activePaletteCategoryId == categoryId) {
+                selectCategory(targetCategoryId)
+            }
+            showNotification("دسته‌بندی حذف و نمادها منتقل شدند")
+        }
+    }
+
+    fun importBulkSymbols(
+        context: Context,
+        itemsToImport: List<com.example.io.BulkImportItem>,
+        renameDuplicates: Boolean,
+        onDone: (Int) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val count = com.example.io.BulkSymbolImporter.executeImport(
+                context = context,
+                itemsToImport = itemsToImport,
+                renameDuplicates = renameDuplicates
+            ) { entity ->
+                repository.insertCustomSymbol(entity)
+            }
+            showNotification("$count نماد با موفقیت درون‌ریزی شد")
+            onDone(count)
+        }
+    }
+
     fun addNoteDefinition(
         name: String,
         symbolType: SymbolType,
@@ -834,7 +873,11 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteNoteDefinition(id: String) {
         viewModelScope.launch {
+            val def = _uiState.value.noteDefinitionsList.find { it.id == id }
             repository.deleteNoteDefinition(id)
+            if (def != null && _uiState.value.activePaletteSymbol?.name == def.symbolTypeName) {
+                _uiState.update { it.copy(activePaletteSymbol = null) }
+            }
             showNotification("تعریف نت حذف شد")
         }
     }

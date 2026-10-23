@@ -233,6 +233,9 @@ fun ScoreEditorScreen(
             },
             onReplaceImage = { sym, newUri ->
                 viewModel.replaceCustomSymbolImage(context, sym, newUri)
+            },
+            onBulkImport = { items, renameDuplicates ->
+                viewModel.importBulkSymbols(context, items, renameDuplicates)
             }
         )
     }
@@ -240,10 +243,14 @@ fun ScoreEditorScreen(
     if (showCategoryManagerDialog) {
         CategoryManagerDialog(
             categories = state.categoriesList,
+            customSymbols = state.customSymbolsList,
+            noteDefinitions = state.noteDefinitionsList,
             onDismiss = { showCategoryManagerDialog = false },
             onAddCategory = { viewModel.addCategory(it) },
             onUpdateCategory = { viewModel.updateCategory(it) },
-            onDeleteCategory = { viewModel.deleteCategorySafely(it) }
+            onDeleteCategorySafely = { viewModel.deleteCategorySafely(it) },
+            onDeleteCategoryWithSymbols = { viewModel.deleteCategoryWithSymbols(it) },
+            onDeleteCategoryAndMoveSymbols = { src, dst -> viewModel.deleteCategoryAndMoveSymbols(src, dst) }
         )
     }
 

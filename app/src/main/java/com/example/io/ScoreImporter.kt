@@ -50,7 +50,7 @@ object ScoreImporter {
             } else if (isJson) {
                 parseProjectJson(content)
             } else {
-                ImportResult(null, false, "فرمت فایل ناشناخته است. لطفاً فایل معتبر .dafnt، .chaharkhat یا MusicXML انتخاب کنید.")
+                ImportResult(null, false, "فرمت فایل ناشناخته است. لطفاً فایل معتبر .dafnt یا MusicXML انتخاب کنید.")
             }
         } catch (e: Exception) {
             ImportResult(null, false, "خطا در بارگذاری فایل: ${e.localizedMessage}")

@@ -108,7 +108,7 @@ fun ProjectsListScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "نت‌نگار چهارخطی",
+                                text = "نت نگار دف",
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold
                             )

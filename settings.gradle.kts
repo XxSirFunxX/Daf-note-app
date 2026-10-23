@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "NotNegar"
+rootProject.name = "NotNegarDaf"
 
 include(":app")

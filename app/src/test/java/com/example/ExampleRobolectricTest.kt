@@ -19,8 +19,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import androidx.room.Room
 import com.example.data.AppDatabase
+import com.example.data.CategoryEntity
+import com.example.data.CustomSymbolEntity
 import com.example.data.ScoreRepository
+import com.example.editor.ScoreTransformMath
+import com.example.io.BulkSymbolImporter
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
@@ -32,7 +39,7 @@ class ExampleRobolectricTest {
     fun readAppNameFromContext() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("نت‌نگار چهارخطی", appName)
+        assertEquals("نت نگار دف", appName)
     }
 
     @Test
@@ -84,7 +91,7 @@ class ExampleRobolectricTest {
             x = 220f,
             y = 80f,
             isRingSound = true,
-            imagePath = "/data/data/com.aistudio.chaharkhat.notnegar/files/symbols/sym_1.png",
+            imagePath = "/data/data/com.daf.notenegar/files/symbols/sym_1.png",
             customData = "custom_id_123"
         )
 
@@ -102,7 +109,7 @@ class ExampleRobolectricTest {
         assertEquals(SymbolType.CUSTOM_SYMBOL, importedSym?.type)
         assertEquals("حلقه ترکیبی ویژه", importedSym?.name)
         assertTrue(importedSym?.isRingSound == true)
-        assertEquals("/data/data/com.aistudio.chaharkhat.notnegar/files/symbols/sym_1.png", importedSym?.imagePath)
+        assertEquals("/data/data/com.daf.notenegar/files/symbols/sym_1.png", importedSym?.imagePath)
         assertEquals("custom_id_123", importedSym?.customData)
     }
 
@@ -493,6 +500,241 @@ class ExampleRobolectricTest {
         val loadedSymbol = loadedProject?.pages?.first()?.symbols?.first()
         assertEquals(placedSymbol.id, loadedSymbol?.id)
         assertEquals(testImageFile.absolutePath, loadedSymbol?.imagePath)
+
+        db.close()
+    }
+
+    @Test
+    fun testScreenToLogicalAndLogicalToScreenInversion() {
+        val containerW = 1080f
+        val containerH = 1920f
+        val renderedW = 1000f
+        val renderedH = 1414f
+        val pageW = 1000f
+        val pageH = 1414f
+        val zoom = 2.5f
+        val panX = 150f
+        val panY = -80f
+
+        val originalLogicalX = 450f
+        val originalLogicalY = 720f
+
+        // Convert logical to screen
+        val (screenX, screenY) = ScoreTransformMath.logicalToScreen(
+            logicalX = originalLogicalX,
+            logicalY = originalLogicalY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = zoom,
+            panOffsetX = panX,
+            panOffsetY = panY
+        )
+
+        // Convert screen back to logical
+        val (recoveredLogicalX, recoveredLogicalY) = ScoreTransformMath.screenToLogical(
+            screenX = screenX,
+            screenY = screenY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = zoom,
+            panOffsetX = panX,
+            panOffsetY = panY
+        )
+
+        assertEquals("Logical X must roundtrip exactly", originalLogicalX, recoveredLogicalX, 0.001f)
+        assertEquals("Logical Y must roundtrip exactly", originalLogicalY, recoveredLogicalY, 0.001f)
+    }
+
+    @Test
+    fun testZoomAnchorKeepsFocalPointStable() {
+        val containerW = 1080f
+        val containerH = 1920f
+        val renderedW = 1000f
+        val renderedH = 1414f
+        val pageW = 1000f
+        val pageH = 1414f
+
+        val initialZoom = 1.0f
+        val newZoom = 2.8f
+        val initialPanX = 50f
+        val initialPanY = -30f
+        val centroidX = 600f
+        val centroidY = 850f
+
+        // Logical position under centroid before zoom
+        val (beforeLogicalX, beforeLogicalY) = ScoreTransformMath.screenToLogical(
+            screenX = centroidX,
+            screenY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = initialZoom,
+            panOffsetX = initialPanX,
+            panOffsetY = initialPanY
+        )
+
+        // Calculate anchored pan offset for new zoom
+        val (newPanX, newPanY) = ScoreTransformMath.calculateZoomAnchor(
+            oldZoom = initialZoom,
+            newZoom = newZoom,
+            oldPanX = initialPanX,
+            oldPanY = initialPanY,
+            centroidX = centroidX,
+            centroidY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH
+        )
+
+        // Logical position under the same centroid after zoom with anchored pan
+        val (afterLogicalX, afterLogicalY) = ScoreTransformMath.screenToLogical(
+            screenX = centroidX,
+            screenY = centroidY,
+            containerWidthPx = containerW,
+            containerHeightPx = containerH,
+            renderedWidthPx = renderedW,
+            renderedHeightPx = renderedH,
+            pageW = pageW,
+            pageH = pageH,
+            zoomScale = newZoom,
+            panOffsetX = newPanX,
+            panOffsetY = newPanY
+        )
+
+        assertEquals("Point under fingers must not drift horizontally during zoom", beforeLogicalX, afterLogicalX, 0.01f)
+        assertEquals("Point under fingers must not drift vertically during zoom", beforeLogicalY, afterLogicalY, 0.01f)
+    }
+
+    @Test
+    fun testCategoryManagement_MoveSymbolsSafely() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        // Add source category and target category
+        dao.insertCategory(CategoryEntity("CAT_SRC", "دسته مبدا", 1, false))
+        dao.insertCategory(CategoryEntity("CAT_DST", "دسته مقصد", 2, false))
+
+        // Add custom symbol in source category
+        val sym = CustomSymbolEntity(id = "sym_move_test", name = "نماد انتقالی", categoryId = "CAT_SRC")
+        dao.insertCustomSymbol(sym)
+
+        // Delete source category and move symbols to target category
+        repo.deleteCategoryAndMoveSymbols("CAT_SRC", "CAT_DST")
+
+        // Check category deletion
+        val categories = dao.getAllCategories().first()
+        assertNull("Source category must be deleted", categories.find { it.id == "CAT_SRC" })
+        assertNotNull("Target category must remain", categories.find { it.id == "CAT_DST" })
+
+        // Check symbol was safely reassigned
+        val symbols = dao.getAllCustomSymbols().first()
+        val movedSym = symbols.find { it.id == "sym_move_test" }
+        assertNotNull("Symbol must still exist", movedSym)
+        assertEquals("Symbol must be in destination category", "CAT_DST", movedSym?.categoryId)
+
+        db.close()
+    }
+
+    @Test
+    fun testCategoryManagement_DeleteCategoryWithSymbols() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        dao.insertCategory(CategoryEntity("CAT_DROP", "دسته حذفی", 1, false))
+        val sym = CustomSymbolEntity(id = "sym_to_delete", name = "نماد حذفی", categoryId = "CAT_DROP")
+        dao.insertCustomSymbol(sym)
+
+        // Delete category and all its symbols
+        repo.deleteCategoryWithSymbols("CAT_DROP")
+
+        val categories = dao.getAllCategories().first()
+        assertNull("Category must be deleted", categories.find { it.id == "CAT_DROP" })
+
+        val symbols = dao.getAllCustomSymbols().first()
+        assertNull("Contained symbol must be deleted", symbols.find { it.id == "sym_to_delete" })
+
+        db.close()
+    }
+
+    @Test
+    fun testBulkSymbolImport_ZipInspectionAndImport() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        // 1. Create a valid test ZIP in cache
+        val zipFile = File(context.cacheDir, "test_symbols.zip")
+        val svgBytes = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+                <circle cx="32" cy="32" r="30" fill="black"/>
+            </svg>
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+        val manifestJson = """
+            [
+              {
+                "name": "نماد تست زیپ",
+                "image": "images/test.svg",
+                "category": "CUSTOM",
+                "isRingSound": true
+              }
+            ]
+        """.trimIndent()
+
+        ZipOutputStream(FileOutputStream(zipFile)).use { zos ->
+            zos.putNextEntry(ZipEntry("manifest.json"))
+            zos.write(manifestJson.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("images/test.svg"))
+            zos.write(svgBytes)
+            zos.closeEntry()
+        }
+
+        // 2. Inspect ZIP
+        val previewResult = BulkSymbolImporter.inspectZip(
+            context = context,
+            zipUri = android.net.Uri.fromFile(zipFile),
+            existingCustomSymbols = emptyList(),
+            availableCategories = listOf(CategoryEntity("CUSTOM", "سفارشی", 1, true))
+        )
+
+        assertTrue("ZIP inspection must succeed", previewResult.isSuccess)
+        val preview = previewResult.getOrNull()
+        assertNotNull(preview)
+        assertEquals(1, preview?.totalFound)
+        assertEquals(1, preview?.validItems?.size)
+        assertEquals("نماد تست زیپ", preview?.validItems?.first()?.name)
+        assertTrue(preview?.validItems?.first()?.isRingSound == true)
+
+        // 3. Execute bulk import
+        val importedCount = BulkSymbolImporter.executeImport(
+            context = context,
+            itemsToImport = preview!!.validItems,
+            renameDuplicates = false
+        ) { entity ->
+            repo.insertCustomSymbol(entity)
+        }
+
+        assertEquals(1, importedCount)
+        val savedSymbols = dao.getAllCustomSymbols().first()
+        val imported = savedSymbols.find { it.name == "نماد تست زیپ" }
+        assertNotNull("Imported symbol must be in database", imported)
+        assertTrue("Imported image must exist on disk", File(imported!!.imagePath!!).exists())
 
         db.close()
     }

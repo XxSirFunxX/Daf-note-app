@@ -135,6 +135,20 @@ class ScoreRepository(
         dao.deleteCategory(categoryId)
     }
 
+    suspend fun deleteCategoryWithSymbols(categoryId: String) {
+        val notes = dao.getAllNoteDefinitions().firstOrNull()?.filter { it.categoryId == categoryId } ?: emptyList()
+        notes.forEach { deleteNoteDefinitionSafely(it.id) }
+        val customs = dao.getAllCustomSymbols().firstOrNull()?.filter { it.categoryId == categoryId } ?: emptyList()
+        customs.forEach { deleteCustomSymbol(it.id) }
+        dao.deleteCategory(categoryId)
+    }
+
+    suspend fun deleteCategoryAndMoveSymbols(categoryId: String, targetCategoryId: String) {
+        dao.reassignCategoryNotes(categoryId, targetCategoryId)
+        dao.reassignCategoryCustomSymbols(categoryId, targetCategoryId)
+        dao.deleteCategory(categoryId)
+    }
+
     // --- NOTE DEFINITIONS MANAGEMENT ---
 
     suspend fun ensureDefaultNoteDefinitions() {
@@ -436,17 +450,27 @@ class ScoreRepository(
         return entity
     }
 
+    suspend fun insertCustomSymbol(symbol: CustomSymbolEntity) {
+        dao.insertCustomSymbol(symbol)
+    }
+
     suspend fun updateCustomSymbol(symbol: CustomSymbolEntity) {
         dao.updateCustomSymbol(symbol)
     }
 
     suspend fun deleteCustomSymbol(id: String, context: Context? = null) {
-        if (context != null) {
-            try {
-                // Find and delete the file
-                val file = File(File(context.filesDir, "symbols"), id)
-                if (file.exists()) file.delete()
-            } catch (ignored: Exception) {}
+        val all = dao.getAllCustomSymbols().firstOrNull() ?: emptyList()
+        val target = all.find { it.id == id }
+        target?.imagePath?.let { path ->
+            val otherRefs = all.any { it.id != id && it.imagePath == path }
+            val noteDefRefs = dao.getAllNoteDefinitions().firstOrNull()?.any { it.imagePath == path } ?: false
+            val projectRefs = dao.getAllProjects().firstOrNull()?.any { p ->
+                val content = p.jsonContent.replace("\\/", "/")
+                content.contains(path)
+            } ?: false
+            if (!otherRefs && !noteDefRefs && !projectRefs) {
+                try { File(path).delete() } catch (ignored: Exception) {}
+            }
         }
         dao.deleteCustomSymbol(id)
     }
@@ -601,7 +625,7 @@ class ScoreRepository(
         }
 
         return ScoreProject(
-            title = "درس نمونه چهارخطی",
+            title = "درس نمونه دف",
             author = "استاد موسیقی",
             pages = listOf(page.copy(symbols = symbols))
         )

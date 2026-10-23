@@ -196,19 +196,38 @@ fun SymbolLibrarySheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 1. Standard SymbolTypes matching current category (filtering out hidden note definitions)
-                val hiddenDefNames = noteDefinitions.filter { it.isHidden }.map { it.symbolTypeName }.toSet()
-                val standardSymbols = SymbolType.values().filter { 
-                    it.defaultCategory.name == activeCategoryId && !hiddenDefNames.contains(it.name)
-                }
-                items(standardSymbols) { symbolType ->
-                    val isSelected = symbolType == activeSymbol
-                    SymbolCard(
-                        title = symbolType.defaultTitleFa,
-                        symbolType = symbolType,
-                        isSelected = isSelected,
-                        onClick = { onSelectSymbol(symbolType) }
-                    )
+                // 1. Active defined symbols for this category
+                val isManagedCategory = activeCategoryId in setOf("NOTES", "RESTS", "RING_SOUNDS") ||
+                                        noteDefinitions.any { it.categoryId == activeCategoryId }
+
+                if (isManagedCategory) {
+                    val activeDefs = noteDefinitions.filter { it.categoryId == activeCategoryId && !it.isHidden }
+                    items(activeDefs) { def ->
+                        val symType = try { SymbolType.valueOf(def.symbolTypeName) } catch (e: Exception) { null }
+                        if (symType != null) {
+                            val isSelected = symType == activeSymbol && activeCustomSymbolId == null
+                            SymbolCard(
+                                title = def.name,
+                                symbolType = symType,
+                                isSelected = isSelected,
+                                onClick = { onSelectSymbol(symType) }
+                            )
+                        }
+                    }
+                } else {
+                    val hiddenDefNames = noteDefinitions.filter { it.isHidden }.map { it.symbolTypeName }.toSet()
+                    val standardSymbols = SymbolType.values().filter { 
+                        it.defaultCategory.name == activeCategoryId && !hiddenDefNames.contains(it.name)
+                    }
+                    items(standardSymbols) { symbolType ->
+                        val isSelected = symbolType == activeSymbol && activeCustomSymbolId == null
+                        SymbolCard(
+                            title = symbolType.defaultTitleFa,
+                            symbolType = symbolType,
+                            isSelected = isSelected,
+                            onClick = { onSelectSymbol(symbolType) }
+                        )
+                    }
                 }
 
                 // 2. Custom Symbols matching current category (or when in CUSTOM)

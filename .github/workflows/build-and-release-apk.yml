@@ -31,19 +31,28 @@ jobs:
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x gradlew
 
-      - name: Generate Debug Keystore
+      - name: Setup Signing Keystore
         run: |
-          keytool -genkeypair \
-            -v \
-            -keystore debug.keystore \
-            -storetype JKS \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "Restoring keystore from GitHub Secrets..."
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > debug.keystore
+          elif [ -f "debug.keystore.base64" ]; then
+            echo "Restoring stable keystore from debug.keystore.base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            echo "Generating fallback keystore..."
+            keytool -genkeypair \
+              -v \
+              -keystore debug.keystore \
+              -storetype JKS \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
@@ -73,7 +82,7 @@ jobs:
           if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/aapt2" ]; then
             PKG_NAME=$("$BUILD_TOOLS_DIR/aapt2" dump packagename "$TARGET_APK")
             echo "Detected Package Name: $PKG_NAME"
-            if [ "$PKG_NAME" != "com.aistudio.chaharkhat.notnegar" ]; then
+            if [ "$PKG_NAME" != "com.daf.notenegar" ]; then
               echo "Error: Unexpected package name $PKG_NAME" >&2
               exit 1
             fi
