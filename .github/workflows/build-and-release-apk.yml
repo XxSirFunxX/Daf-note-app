@@ -37,6 +37,21 @@ jobs:
         run: |
           set -e
           echo "Setting up stable signing keystore..."
+
+          # Safe Diagnostics (Only reporting yes/no, never secret content)
+          if [ -f "debug.keystore.base64" ]; then
+            echo "Diagnostic: debug.keystore.base64 exists: yes"
+          else
+            echo "Diagnostic: debug.keystore.base64 exists: no"
+          fi
+
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
+            echo "Diagnostic: RELEASE_KEYSTORE_BASE64 is set: yes"
+          else
+            echo "Diagnostic: RELEASE_KEYSTORE_BASE64 is set: no"
+          fi
+
+          # Keystore Restoration Logic
           if [ -f "debug.keystore.base64" ]; then
             echo "Restoring persistent keystore from repository debug.keystore.base64..."
             base64 --decode debug.keystore.base64 > debug.keystore
@@ -46,15 +61,19 @@ jobs:
           elif [ -f "debug.keystore" ]; then
             echo "Using existing debug.keystore in workspace..."
           else
-            echo "Error: Persistent keystore is missing! Ephemeral fallback generation is disabled to prevent signing mismatch." >&2
+            echo "Error: Persistent keystore is missing! Neither debug.keystore.base64 nor RELEASE_KEYSTORE_BASE64 is available." >&2
             exit 1
           fi
 
-          if [ ! -s "debug.keystore" ]; then
+          # Validation
+          if [ -s "debug.keystore" ]; then
+            echo "Diagnostic: debug.keystore exists and is nonempty: yes"
+            echo "Keystore verified successfully. Size: $(wc -c < debug.keystore) bytes."
+          else
+            echo "Diagnostic: debug.keystore exists and is nonempty: no"
             echo "Error: debug.keystore is missing or empty after decoding!" >&2
             exit 1
           fi
-          echo "Keystore verified successfully. Size: $(wc -c < debug.keystore) bytes."
 
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
