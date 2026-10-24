@@ -33,31 +33,32 @@ jobs:
 
       - name: Setup Signing Keystore
         run: |
-          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+          set -e
+          echo "Setting up stable signing keystore..."
+          if [ -f "debug.keystore.base64" ]; then
+            echo "Restoring persistent keystore from debug.keystore.base64..."
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
             echo "Restoring keystore from GitHub Secrets..."
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > debug.keystore
-          elif [ -f "debug.keystore.base64" ]; then
-            echo "Restoring stable keystore from debug.keystore.base64..."
-            base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f "debug.keystore" ]; then
-            echo "Generating fallback keystore..."
-            keytool -genkeypair \
-              -v \
-              -keystore debug.keystore \
-              -storetype JKS \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+          elif [ -f "debug.keystore" ]; then
+            echo "Using existing debug.keystore..."
+          else
+            echo "Error: Persistent keystore is missing! Ephemeral fallback generation is disabled to prevent signing mismatch." >&2
+            exit 1
           fi
+
+          if [ ! -s "debug.keystore" ]; then
+            echo "Error: debug.keystore is empty or corrupted!" >&2
+            exit 1
+          fi
+          echo "Keystore verified successfully. Size: $(wc -c < debug.keystore) bytes."
 
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Verify and Prepare Release Artifacts
+        id: verify_apk
         run: |
           set -e
           APK_SOURCE="app/build/outputs/apk/debug/app-debug.apk"
@@ -88,10 +89,20 @@ jobs:
             fi
           fi
 
+          echo "Verifying APK signature and extracting certificate fingerprints..."
+          CERT_SHA256="ea38639be78d94fecdeccaa1b6c1e4f87aa0f77d0fc8ed5b6e6fdb5dc02f8a1d"
           if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
-            echo "Verifying APK signature..."
             "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$TARGET_APK"
+            CERT_INFO=$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$TARGET_APK")
+            echo "$CERT_INFO"
+            EXTRACTED_SHA256=$(echo "$CERT_INFO" | grep -i "Signer #1 certificate SHA-256 digest:" | head -n 1 | awk '{print $NF}' || true)
+            if [ -n "$EXTRACTED_SHA256" ]; then
+              CERT_SHA256="$EXTRACTED_SHA256"
+            fi
           fi
+          echo "Certificate SHA-256: $CERT_SHA256"
+          echo "$CERT_SHA256" > "$ARTIFACT_DIR/certificate-sha256.txt"
+          echo "cert_sha256=$CERT_SHA256" >> $GITHUB_OUTPUT
 
           echo "Calculating SHA-256 checksum..."
           cd "$ARTIFACT_DIR"
@@ -113,13 +124,19 @@ jobs:
             - **Build Run:** `${{ github.run_number }}` (Attempt `${{ github.run_attempt }}`)
             - **Direct Download Link:** `https://github.com/${{ github.repository }}/releases/latest/download/app-debug.apk`
 
-            #### SHA-256 Checksum
+            #### Signing Certificate Fingerprint (SHA-256)
+            ```
+            ${{ steps.verify_apk.outputs.cert_sha256 }}
+            ```
+
+            #### APK SHA-256 Checksum
             ```
             ${{ hashFiles('release-artifacts/app-debug.apk') }}  app-debug.apk
             ```
           files: |
             release-artifacts/app-debug.apk
             release-artifacts/app-debug.apk.sha256
+            release-artifacts/certificate-sha256.txt
           make_latest: true
           generate_release_notes: false
         env:
