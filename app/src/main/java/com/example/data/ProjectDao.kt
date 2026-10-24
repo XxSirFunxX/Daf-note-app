@@ -79,6 +79,9 @@ interface ProjectDao {
     suspend fun reassignCategoryNotes(oldCategoryId: String, newCategoryId: String)
 
     // --- CUSTOM SYMBOLS ---
+    @Query("SELECT * FROM custom_symbols WHERE isHidden = 0 ORDER BY createdAt DESC")
+    fun getAllActiveCustomSymbols(): Flow<List<CustomSymbolEntity>>
+
     @Query("SELECT * FROM custom_symbols ORDER BY createdAt DESC")
     fun getAllCustomSymbols(): Flow<List<CustomSymbolEntity>>
 
@@ -90,6 +93,9 @@ interface ProjectDao {
 
     @Query("DELETE FROM custom_symbols WHERE id = :id")
     suspend fun deleteCustomSymbol(id: String)
+
+    @Query("UPDATE custom_symbols SET isHidden = :hidden WHERE id = :id")
+    suspend fun setCustomSymbolHidden(id: String, hidden: Boolean)
 
     @Query("UPDATE custom_symbols SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun reassignCategoryCustomSymbols(oldCategoryId: String, newCategoryId: String)

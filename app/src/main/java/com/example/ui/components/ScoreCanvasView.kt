@@ -117,12 +117,24 @@ fun ScoreCanvasView(
                             panOffsetY = currentPanY
                         )
 
-                        // Check if down was on a selected symbol or any symbol on page
+                        // Check if down was on a selected symbol or any symbol on page (taking rotation into account)
                         val hitSymbol = page.symbols.lastOrNull { sym ->
                             val (hw, hh) = sym.getVisualBounds(page.lineSpacing)
-                            downLogicalX in (sym.x - hw - 14f)..(sym.x + hw + 14f) &&
-                            downLogicalY in (sym.y - hh - 14f)..(sym.y + hh + 14f)
+                            if (sym.rotation != 0f) {
+                                val dx = (downLogicalX - sym.x).toDouble()
+                                val dy = (downLogicalY - sym.y).toDouble()
+                                val rad = Math.toRadians(-sym.rotation.toDouble())
+                                val cos = Math.cos(rad)
+                                val sin = Math.sin(rad)
+                                val localX = (dx * cos - dy * sin).toFloat()
+                                val localY = (dx * sin + dy * cos).toFloat()
+                                localX in (-hw - 14f)..(hw + 14f) && localY in (-hh - 14f)..(hh + 14f)
+                            } else {
+                                downLogicalX in (sym.x - hw - 14f)..(sym.x + hw + 14f) &&
+                                downLogicalY in (sym.y - hh - 14f)..(sym.y + hh + 14f)
+                            }
                         }
+
 
                         var isTransforming = false
                         var isDragging = false

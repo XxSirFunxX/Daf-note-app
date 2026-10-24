@@ -189,6 +189,13 @@ object ScoreRenderer {
         val scale = symbol.scale * (baseSpacing / 16f)
         canvas.scale(scale, scale)
 
+        // If symbol has a custom image path or is a custom symbol, render image
+        if (!symbol.imagePath.isNullOrBlank() || symbol.type == SymbolType.CUSTOM_SYMBOL) {
+            drawCustomSymbol(canvas, symbol)
+            canvas.restore()
+            return
+        }
+
         when (symbol.type) {
             // Notes
             SymbolType.NOTE_QUARTER -> drawQuarterNote(canvas, symbol.isStemUp)
@@ -263,10 +270,15 @@ object ScoreRenderer {
 
     private fun drawSelectionHighlight(canvas: Canvas, symbol: ScoreSymbol, baseSpacing: Float) {
         val (halfW, halfH) = symbol.getVisualBounds(baseSpacing)
-        val left = symbol.x - halfW - 4f
-        val top = symbol.y - halfH - 4f
-        val right = symbol.x + halfW + 4f
-        val bottom = symbol.y + halfH + 4f
+        canvas.save()
+        canvas.translate(symbol.x, symbol.y)
+        if (symbol.rotation != 0f) {
+            canvas.rotate(symbol.rotation)
+        }
+        val left = -halfW - 4f
+        val top = -halfH - 4f
+        val right = halfW + 4f
+        val bottom = halfH + 4f
 
         canvas.drawRoundRect(left, top, right, bottom, 6f, 6f, selectionBoxPaint)
 
@@ -276,7 +288,9 @@ object ScoreRenderer {
         canvas.drawCircle(right, top, handleR, selectionHandlePaint)
         canvas.drawCircle(left, bottom, handleR, selectionHandlePaint)
         canvas.drawCircle(right, bottom, handleR, selectionHandlePaint)
+        canvas.restore()
     }
+
 
     // ==========================================
     // GLYPH DRAWING IMPLEMENTATIONS
@@ -647,37 +661,17 @@ object ScoreRenderer {
         if (!path.isNullOrBlank()) {
             val file = java.io.File(path)
             if (file.exists()) {
-                val halfSize = 14f * symbol.scale
+                val halfSize = 14f
                 val rect = RectF(-halfSize, -halfSize, halfSize, halfSize)
-
-                // 1. Direct SVG Vector rendering for crisp line display
-                if (path.endsWith(".svg", ignoreCase = true)) {
-                    try {
-                        file.inputStream().use { stream ->
-                            val svg = com.caverock.androidsvg.SVG.getFromInputStream(stream)
-                            svg.renderToCanvas(canvas, rect)
-                            return
-                        }
-                    } catch (ignored: Exception) {}
-                }
-
-                // 2. Standard Android Bitmap (PNG, JPEG, WebP)
-                val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                val bmp = com.example.util.CustomSymbolImageHelper.loadBitmap(file, 256)
                 if (bmp != null) {
-                    canvas.drawBitmap(bmp, null, rect, null)
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
+                    canvas.drawBitmap(bmp, null, rect, paint)
                     return
                 }
-
-                // 3. Fallback SVG attempt in case file was saved without .svg extension
-                try {
-                    file.inputStream().use { stream ->
-                        val svg = com.caverock.androidsvg.SVG.getFromInputStream(stream)
-                        svg.renderToCanvas(canvas, rect)
-                        return
-                    }
-                } catch (ignored: Exception) {}
             }
         }
+
         // Fallback: draw custom geometric/symbol marker with name
         val p = Paint(inkStrokePaint).apply { strokeWidth = 2f }
         canvas.drawRoundRect(-12f, -12f, 12f, 12f, 4f, 4f, p)

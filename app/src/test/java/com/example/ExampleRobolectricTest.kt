@@ -21,7 +21,10 @@ import androidx.room.Room
 import com.example.data.AppDatabase
 import com.example.data.CategoryEntity
 import com.example.data.CustomSymbolEntity
+import com.example.data.NoteDefinitionEntity
 import com.example.data.ScoreRepository
+import com.example.model.SymbolCategory
+
 import com.example.editor.ScoreTransformMath
 import com.example.io.BulkSymbolImporter
 import java.io.File
@@ -738,5 +741,223 @@ class ExampleRobolectricTest {
 
         db.close()
     }
+
+    // ==========================================
+    // TASK 1 TESTS: VERTICAL MOVEMENT CONTROLS
+    // ==========================================
+
+    @Test
+    fun testVerticalMovement_movesSymbolUpAndDownByStep() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.example.viewmodel.ScoreViewModel(app)
+
+        val page = ScorePage(
+            lineSpacing = 16f,
+            symbols = listOf(
+                ScoreSymbol(id = "sym_1", type = SymbolType.NOTE_QUARTER, x = 150f, y = 100f)
+            )
+        )
+        val project = ScoreProject(title = "تست حرکت عمودی", pages = listOf(page))
+        vm.openProject(project)
+
+        // Select symbol 1
+        vm.onCanvasTap(150f, 100f)
+        assertTrue(vm.uiState.value.selectedSymbolIds.contains("sym_1"))
+
+        val initialY = 100f
+        val step = 16f * 0.5f // 8f
+
+        // Move Up: deltaY is -8f
+        vm.moveSelectedSymbolsVertical(directionUp = true)
+        val movedUpSym = vm.uiState.value.currentProject?.activePage?.symbols?.find { it.id == "sym_1" }
+        assertNotNull(movedUpSym)
+        assertEquals(150f, movedUpSym!!.x, 0.01f) // Horizontal position unchanged!
+        assertEquals(initialY - step, movedUpSym.y, 0.01f) // Y moved by -8f
+        assertTrue(vm.uiState.value.selectedSymbolIds.contains("sym_1")) // Remains selected!
+
+        // Move Down: deltaY is +8f, back to initialY
+        vm.moveSelectedSymbolsVertical(directionUp = false)
+        val movedDownSym = vm.uiState.value.currentProject?.activePage?.symbols?.find { it.id == "sym_1" }
+        assertNotNull(movedDownSym)
+        assertEquals(150f, movedDownSym!!.x, 0.01f)
+        assertEquals(initialY, movedDownSym.y, 0.01f)
+    }
+
+    @Test
+    fun testVerticalMovement_preservesRelativePositionInMultiSelection() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.example.viewmodel.ScoreViewModel(app)
+
+        val sym1 = ScoreSymbol(id = "s1", type = SymbolType.NOTE_QUARTER, x = 120f, y = 100f)
+        val sym2 = ScoreSymbol(id = "s2", type = SymbolType.NOTE_HALF, x = 180f, y = 120f)
+        val page = ScorePage(lineSpacing = 16f, symbols = listOf(sym1, sym2))
+        vm.openProject(ScoreProject(title = "چندانتخابی", pages = listOf(page)))
+
+        vm.toggleMultiSelectMode()
+        vm.onCanvasTap(120f, 100f)
+        vm.onCanvasTap(180f, 120f)
+        assertEquals(2, vm.uiState.value.selectedSymbolIds.size)
+
+        // Move both up by 8f
+        vm.moveSelectedSymbolsVertical(directionUp = true)
+
+        val updated1 = vm.uiState.value.currentProject?.activePage?.symbols?.find { it.id == "s1" }!!
+        val updated2 = vm.uiState.value.currentProject?.activePage?.symbols?.find { it.id == "s2" }!!
+
+        assertEquals(100f - 8f, updated1.y, 0.01f)
+        assertEquals(120f - 8f, updated2.y, 0.01f)
+        // Relative spacing preserved!
+        assertEquals(20f, updated2.y - updated1.y, 0.01f)
+    }
+
+    // ==========================================
+    // TASK 2 TESTS: DELETE BUILT-IN CATEGORIES
+    // ==========================================
+
+    @Test
+    fun testDeleteDefaultCategory_deletesCategoryAndChildSymbols_persistsAcrossRestart() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        // 1. Seed defaults
+        repo.ensureDefaultCategories()
+        repo.ensureDefaultNoteDefinitions()
+
+        val initialCats = dao.getAllCategories().first()
+        assertTrue(initialCats.any { it.id == "RESTS" })
+
+        // 2. Delete the default RESTS category with symbols
+        repo.deleteCategoryWithSymbols("RESTS")
+
+        val remainingCats = dao.getAllCategories().first()
+        assertTrue("RESTS category must be deleted", remainingCats.none { it.id == "RESTS" })
+        assertTrue("NOTES category must be preserved", remainingCats.any { it.id == "NOTES" })
+
+        val remainingNotes = dao.getAllNoteDefinitions().first()
+        assertTrue("Child notes belonging to RESTS must be deleted", remainingNotes.none { it.categoryId == "RESTS" })
+        assertTrue("Child notes belonging to NOTES must be preserved", remainingNotes.any { it.categoryId == "NOTES" })
+
+        // 3. Restart simulation: ensureDefaultCategories must not recreate RESTS
+        repo.ensureDefaultCategories()
+        val catsAfterRestart = dao.getAllCategories().first()
+        assertTrue("RESTS must not be recreated after restart", catsAfterRestart.none { it.id == "RESTS" })
+
+        db.close()
+    }
+
+    // ==========================================
+    // TASK 3 TESTS: HIDE/SHOW TOGGLE & PERSISTENCE
+    // ==========================================
+
+    @Test
+    fun testNoteDefinition_hideShowToggle_doesNotDeleteRecord() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val dao = db.projectDao()
+        val repo = ScoreRepository(dao, context)
+
+        val note = NoteDefinitionEntity(
+            id = "note_toggle_test",
+            name = "نت آزمایشی پنهان",
+            symbolTypeName = "NOTE_QUARTER",
+            categoryId = "NOTES",
+            isHidden = false
+        )
+        dao.insertNoteDefinition(note)
+
+        // Active notes includes it
+        val activeInitial = dao.getAllActiveNoteDefinitions().first()
+        assertTrue(activeInitial.any { it.id == "note_toggle_test" })
+
+        // Hide note
+        repo.hideNoteDefinition("note_toggle_test", true)
+
+        // Must be hidden from active list
+        val activeAfterHide = dao.getAllActiveNoteDefinitions().first()
+        assertTrue("Hidden note must not be in active definitions", activeAfterHide.none { it.id == "note_toggle_test" })
+
+        // BUT record still exists in all definitions
+        val allAfterHide = dao.getAllNoteDefinitions().first()
+        val hiddenRecord = allAfterHide.find { it.id == "note_toggle_test" }
+        assertNotNull("Record must still exist in database", hiddenRecord)
+        assertTrue("Record must have isHidden = true", hiddenRecord!!.isHidden)
+
+        // Unhide note
+        repo.hideNoteDefinition("note_toggle_test", false)
+        val activeAfterUnhide = dao.getAllActiveNoteDefinitions().first()
+        assertTrue("Unhidden note must return to active list", activeAfterUnhide.any { it.id == "note_toggle_test" })
+
+        db.close()
+    }
+
+    // ==========================================
+    // TASK 4 TESTS: ROTATION 30 DEGREES 12 STEPS
+    // ==========================================
+
+    @Test
+    fun testRotation_allSymbolTypesRotateBy30DegreesClockwise12Steps() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.example.viewmodel.ScoreViewModel(app)
+
+        val customSym = ScoreSymbol(
+            id = "custom_rot_test",
+            type = SymbolType.CUSTOM_SYMBOL,
+            category = SymbolCategory.CUSTOM,
+            name = "نماد سفارشی چرخشی",
+            x = 200f,
+            y = 150f,
+            rotation = 0f
+        )
+        val page = ScorePage(symbols = listOf(customSym))
+        vm.openProject(ScoreProject(title = "تست چرخش", pages = listOf(page)))
+
+        vm.onCanvasTap(200f, 150f)
+        assertTrue(vm.uiState.value.selectedSymbolIds.contains("custom_rot_test"))
+
+        val expectedAngles = listOf(30f, 60f, 90f, 120f, 150f, 180f, 210f, 240f, 270f, 300f, 330f, 0f)
+
+        for ((stepIndex, expectedAngle) in expectedAngles.withIndex()) {
+            vm.rotateSelected()
+            val currentSym = vm.uiState.value.currentProject?.activePage?.symbols?.find { it.id == "custom_rot_test" }
+            assertNotNull(currentSym)
+            assertEquals("Step $stepIndex angle mismatch", expectedAngle, currentSym!!.rotation, 0.01f)
+            // Center position must NEVER drift
+            assertEquals(200f, currentSym.x, 0.01f)
+            assertEquals(150f, currentSym.y, 0.01f)
+        }
+    }
+
+    // ==========================================
+    // TASK 5 TESTS: HIGH-RES EXPORT & HARMONIZATION
+    // ==========================================
+
+    @Test
+    fun testExportImageQuality_rendersHighResolutionWithWhiteBackdropForJpg() {
+        val page = ScorePage(
+            paperSize = PaperSize.A4, // 595 x 842 pt
+            symbols = listOf(
+                ScoreSymbol(type = SymbolType.NOTE_QUARTER, x = 120f, y = 100f, rotation = 30f)
+            )
+        )
+
+        // 1. High resolution bitmap scale
+        val pngBitmap = ScoreExporter.renderPageToBitmap(page, isPng = true, scale = 3.0f)
+        assertNotNull(pngBitmap)
+        assertEquals((page.paperSize.widthPt * 3.0f).toInt(), pngBitmap.width)
+        assertEquals((page.paperSize.heightPt * 3.0f).toInt(), pngBitmap.height)
+
+        // 2. JPG must have solid white background
+        val jpgBitmap = ScoreExporter.renderPageToBitmap(page, isPng = false, scale = 3.0f)
+        assertNotNull(jpgBitmap)
+        val cornerPixel = jpgBitmap.getPixel(0, 0)
+        assertEquals("Corner pixel must be fully opaque for JPG", 255, android.graphics.Color.alpha(cornerPixel))
+        assertTrue("Corner pixel must be solid white or paper color for JPG", cornerPixel == android.graphics.Color.WHITE || cornerPixel == android.graphics.Color.parseColor("#FFFDF9"))
+
+        pngBitmap.recycle()
+        jpgBitmap.recycle()
+    }
 }
+
 

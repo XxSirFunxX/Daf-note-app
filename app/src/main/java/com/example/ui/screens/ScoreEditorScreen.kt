@@ -92,6 +92,7 @@ fun ScoreEditorScreen(
                 canUndo = state.canUndo,
                 canRedo = state.canRedo,
                 isSaving = state.isSaving,
+                hasSelection = state.selectedSymbolIds.isNotEmpty(),
                 onBack = {
                     viewModel.flushAutoSave()
                     onBackToProjects()
@@ -99,6 +100,9 @@ fun ScoreEditorScreen(
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
                 onSave = { viewModel.saveProjectExplicitly() },
+                onMoveUp = { viewModel.moveSelectedSymbolsVertical(directionUp = true) },
+                onMoveDown = { viewModel.moveSelectedSymbolsVertical(directionUp = false) },
+                onNoSelection = { viewModel.showNotification("ابتدا نماد مورد نظر را انتخاب کنید") },
                 onOpenPageManager = { showPageManager = true },
                 onOpenPageSettings = { showPageSettings = true },
                 onOpenExport = { showExportDialog = true },
@@ -159,6 +163,9 @@ fun ScoreEditorScreen(
                 onToggleMultiSelect = { viewModel.toggleMultiSelectMode() },
                 onResizeSelected = { multiplier -> viewModel.resizeSelected(multiplier) },
                 onFlipStem = { viewModel.flipStemSelected() },
+                onRotate = { viewModel.rotateSelected() },
+                onMoveUp = { viewModel.moveSelectedSymbolsVertical(directionUp = true) },
+                onMoveDown = { viewModel.moveSelectedSymbolsVertical(directionUp = false) },
                 onDuplicate = { viewModel.duplicateSelected() },
                 onDelete = { viewModel.deleteSelected() },
                 onToggleGuides = { viewModel.toggleGuides() },
@@ -166,6 +173,7 @@ fun ScoreEditorScreen(
                 onResetZoom = { viewModel.resetZoom() },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
+
         }
     }
 
@@ -234,10 +242,14 @@ fun ScoreEditorScreen(
             onReplaceImage = { sym, newUri ->
                 viewModel.replaceCustomSymbolImage(context, sym, newUri)
             },
+            onToggleHiddenCustomSymbol = { id, hidden ->
+                viewModel.toggleCustomSymbolHidden(id, hidden)
+            },
             onBulkImport = { items, renameDuplicates ->
                 viewModel.importBulkSymbols(context, items, renameDuplicates)
             }
         )
+
     }
 
     if (showCategoryManagerDialog) {

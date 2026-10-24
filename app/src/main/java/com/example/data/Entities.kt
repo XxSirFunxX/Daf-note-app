@@ -49,7 +49,9 @@ data class CustomSymbolEntity(
     val name: String,
     val categoryId: String = "CUSTOM",
     val isRingSound: Boolean = false,
+    val isHidden: Boolean = false,
     val vectorData: String? = null,
     val imagePath: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
+

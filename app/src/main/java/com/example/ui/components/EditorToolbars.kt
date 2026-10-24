@@ -16,6 +16,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
@@ -23,6 +25,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.SwapVert
+
 import androidx.compose.material.icons.filled.GridOff
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.HorizontalRule
@@ -75,10 +82,14 @@ fun EditorTopBar(
     canUndo: Boolean,
     canRedo: Boolean,
     isSaving: Boolean,
+    hasSelection: Boolean = false,
     onBack: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSave: () -> Unit,
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
+    onNoSelection: () -> Unit = {},
     onOpenPageManager: () -> Unit,
     onOpenPageSettings: () -> Unit,
     onOpenExport: () -> Unit,
@@ -87,6 +98,7 @@ fun EditorTopBar(
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var verticalMenuExpanded by remember { mutableStateOf(false) }
 
     TopAppBar(
         title = {
@@ -114,6 +126,52 @@ fun EditorTopBar(
             }
         },
         actions = {
+            // Vertical movement control popup
+            Box {
+                IconButton(
+                    onClick = {
+                        if (hasSelection) {
+                            verticalMenuExpanded = true
+                        } else {
+                            onNoSelection()
+                        }
+                    },
+                    modifier = Modifier.testTag("btn_vertical_movement")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SwapVert,
+                        contentDescription = "انتقال عمودی نماد بین خطوط حامل",
+                        tint = if (hasSelection) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f)
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = verticalMenuExpanded && hasSelection,
+                    onDismissRequest = { verticalMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("انتقال به بالا (خط/فاصله)") },
+                        leadingIcon = {
+                            Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        onClick = {
+                            onMoveUp()
+                        },
+                        modifier = Modifier.testTag("menu_move_up")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("انتقال به پایین (خط/فاصله)") },
+                        leadingIcon = {
+                            Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        onClick = {
+                            onMoveDown()
+                        },
+                        modifier = Modifier.testTag("menu_move_down")
+                    )
+                }
+            }
+
             // Undo
             IconButton(
                 onClick = onUndo,
@@ -217,6 +275,9 @@ fun FloatingQuickToolbar(
     onToggleMultiSelect: () -> Unit,
     onResizeSelected: (Float) -> Unit,
     onFlipStem: () -> Unit,
+    onRotate: () -> Unit = {},
+    onMoveUp: () -> Unit = {},
+    onMoveDown: () -> Unit = {},
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onToggleGuides: () -> Unit,
@@ -312,6 +373,30 @@ fun FloatingQuickToolbar(
                         .background(Color(0xFFD6D0C5))
                 )
 
+                // Move Up (vertical movement between lines/spaces)
+                IconButton(
+                    onClick = onMoveUp,
+                    modifier = Modifier.size(36.dp).testTag("btn_quick_move_up")
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "انتقال نماد به بالا", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                }
+
+                // Move Down (vertical movement between lines/spaces)
+                IconButton(
+                    onClick = onMoveDown,
+                    modifier = Modifier.size(36.dp).testTag("btn_quick_move_down")
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "انتقال نماد به پایین", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                }
+
+                // Rotate (clockwise 30 degrees)
+                IconButton(
+                    onClick = onRotate,
+                    modifier = Modifier.size(36.dp).testTag("btn_rotate_selection")
+                ) {
+                    Icon(Icons.Default.RotateRight, contentDescription = "چرخش ۳۰ درجه ساعت‌گرد", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
+
                 // Scale up
                 IconButton(
                     onClick = { onResizeSelected(1.15f) },
@@ -357,6 +442,7 @@ fun FloatingQuickToolbar(
                     )
                 }
             }
+
         }
     }
 }

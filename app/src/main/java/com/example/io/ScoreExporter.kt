@@ -194,25 +194,32 @@ object ScoreExporter {
         }
     }
 
-    /**
-     * Exports a single page as a high-resolution PNG or JPG image file in cache.
-     */
-    fun exportPageToImage(
-        context: Context,
-        page: ScorePage,
-        isPng: Boolean = true,
-        quality: Int = 95
-    ): File {
-        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val ext = if (isPng) "png" else "jpg"
-        val fileName = "page_${page.pageNumber}_${System.currentTimeMillis()}.$ext"
-        val imageFile = File(exportDir, fileName)
+    const val HIGH_RES_EXPORT_SCALE = 3.0f
+    const val DEFAULT_JPG_QUALITY = 85
 
-        val width = page.paperSize.widthPt.toInt()
-        val height = page.paperSize.heightPt.toInt()
+    /**
+     * Unified, consolidated renderer that generates a crisp, high-resolution Bitmap for a ScorePage.
+     * Guarantees identical visual output, scaling, fonts, and rotation across both Direct-to-URI and Share-Intent export paths.
+     * In JPG export, replaces transparent background with pure solid white.
+     */
+    fun renderPageToBitmap(
+        page: ScorePage,
+        isPng: Boolean,
+        scale: Float = HIGH_RES_EXPORT_SCALE
+    ): Bitmap {
+        val width = (page.paperSize.widthPt * scale).toInt().coerceAtLeast(1)
+        val height = (page.paperSize.heightPt * scale).toInt().coerceAtLeast(1)
 
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+
+        // For JPG, replace transparent backdrop with solid white
+        if (!isPng) {
+            canvas.drawColor(android.graphics.Color.WHITE)
+        }
+
+        canvas.save()
+        canvas.scale(scale, scale)
 
         ScoreRenderer.drawPage(
             canvas = canvas,
@@ -222,6 +229,26 @@ object ScoreExporter {
             highlightLine4 = false
         )
 
+        canvas.restore()
+        return bitmap
+    }
+
+    /**
+     * Exports a single page as a high-resolution PNG or JPG image file in cache for sharing.
+     */
+    fun exportPageToImage(
+        context: Context,
+        page: ScorePage,
+        isPng: Boolean = true,
+        quality: Int = if (isPng) 100 else DEFAULT_JPG_QUALITY,
+        scale: Float = HIGH_RES_EXPORT_SCALE
+    ): File {
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val ext = if (isPng) "png" else "jpg"
+        val fileName = "page_${page.pageNumber}_${System.currentTimeMillis()}.$ext"
+        val imageFile = File(exportDir, fileName)
+
+        val bitmap = renderPageToBitmap(page, isPng, scale)
         val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
         FileOutputStream(imageFile).use { out ->
             bitmap.compress(compressFormat, quality, out)
@@ -232,30 +259,18 @@ object ScoreExporter {
     }
 
     /**
-     * Writes image directly to a user-selected destination URI.
+     * Writes image directly to a user-selected destination URI (Storage Access Framework).
      */
     fun writeImageToUri(
         context: Context,
         uri: Uri,
         page: ScorePage,
         isPng: Boolean = true,
-        quality: Int = 95
+        quality: Int = if (isPng) 100 else DEFAULT_JPG_QUALITY,
+        scale: Float = HIGH_RES_EXPORT_SCALE
     ): Boolean {
         return try {
-            val width = page.paperSize.widthPt.toInt()
-            val height = page.paperSize.heightPt.toInt()
-
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-
-            ScoreRenderer.drawPage(
-                canvas = canvas,
-                page = page,
-                selectedSymbolIds = emptySet(),
-                showGuides = false,
-                highlightLine4 = false
-            )
-
+            val bitmap = renderPageToBitmap(page, isPng, scale)
             val compressFormat = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 bitmap.compress(compressFormat, quality, out)
@@ -267,6 +282,7 @@ object ScoreExporter {
             false
         }
     }
+
 
     /**
      * Helper to share any generated file via Android's native share sheet.

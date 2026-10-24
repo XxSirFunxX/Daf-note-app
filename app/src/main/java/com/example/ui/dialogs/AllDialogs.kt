@@ -780,6 +780,7 @@ fun CustomSymbolsManagerDialog(
     onDeleteCustom: (String) -> Unit,
     onSelectForPlacement: (CustomSymbolEntity) -> Unit,
     onReplaceImage: (CustomSymbolEntity, Uri) -> Unit = { _, _ -> },
+    onToggleHiddenCustomSymbol: (String, Boolean) -> Unit = { _, _ -> },
     onBulkImport: ((List<BulkImportItem>, Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -1205,6 +1206,16 @@ fun CustomSymbolsManagerDialog(
                                         ) {
                                             Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                         }
+
+                                        Spacer(modifier = Modifier.width(4.dp))
+
+                                        // Hide / Show Switch
+                                        Switch(
+                                            checked = !sym.isHidden,
+                                            onCheckedChange = { isVisible ->
+                                                onToggleHiddenCustomSymbol(sym.id, !isVisible)
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -1238,10 +1249,18 @@ fun CustomSymbolsManagerDialog(
                 TextButton(onClick = onDismiss) { Text("بستن") }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("انصراف") }
-        }
+        dismissButton = if (selectedTab == 0) {
+            {
+                TextButton(onClick = {
+                    name = ""
+                    selectedImageUri = null
+                    previewBitmap = null
+                    if (customSymbols.isNotEmpty()) selectedTab = 1 else onDismiss()
+                }) { Text("انصراف") }
+            }
+        } else null
     )
+
 
     // Sub-dialog: Edit custom symbol info (includes name, category, ring rule, AND image replacement)
     if (editingSymbol != null) {
@@ -1820,26 +1839,28 @@ fun CategoryManagerDialog(
                                 }
 
                                 if (cat.isDefault) {
-                                    Text("پیش‌فرض سیستم", fontSize = 11.sp, color = Color.Gray)
-                                } else {
-                                    IconButton(
-                                        onClick = {
-                                            categoryToEdit = cat
-                                            editTitle = cat.titleFa
-                                            editErrorMessage = null
-                                        },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                    }
-
-                                    IconButton(
-                                        onClick = { categoryToDelete = cat },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                    }
+                                    Text("پیش‌فرض", fontSize = 10.sp, color = Color.Gray)
+                                    Spacer(modifier = Modifier.width(4.dp))
                                 }
+
+                                IconButton(
+                                    onClick = {
+                                        categoryToEdit = cat
+                                        editTitle = cat.titleFa
+                                        editErrorMessage = null
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                }
+
+                                IconButton(
+                                    onClick = { categoryToDelete = cat },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                }
+
                             }
                         }
                     }
@@ -2314,10 +2335,16 @@ fun NoteDefinitionsManagerDialog(
                 TextButton(onClick = onDismiss) { Text("بستن") }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("انصراف") }
-        }
+        dismissButton = if (selectedTab == 1) {
+            {
+                TextButton(onClick = {
+                    newDefName = ""
+                    selectedTab = 0
+                }) { Text("انصراف") }
+            }
+        } else null
     )
+
 
     // Edit Sub-dialog
     if (editingDef != null) {

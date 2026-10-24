@@ -302,15 +302,27 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val page = project.activePage
         val baseSpacing = page.lineSpacing
 
-        // Check if user tapped an existing symbol
+        // Check if user tapped an existing symbol (taking rotation into account)
         val hitSymbol = page.symbols.lastOrNull { sym ->
             val (hw, hh) = sym.getVisualBounds(baseSpacing)
-            val left = sym.x - hw - 8f
-            val right = sym.x + hw + 8f
-            val top = sym.y - hh - 8f
-            val bottom = sym.y + hh + 8f
-            logicalX in left..right && logicalY in top..bottom
+            if (sym.rotation != 0f) {
+                val dx = (logicalX - sym.x).toDouble()
+                val dy = (logicalY - sym.y).toDouble()
+                val rad = Math.toRadians(-sym.rotation.toDouble())
+                val cos = Math.cos(rad)
+                val sin = Math.sin(rad)
+                val localX = (dx * cos - dy * sin).toFloat()
+                val localY = (dx * sin + dy * cos).toFloat()
+                localX in (-hw - 10f)..(hw + 10f) && localY in (-hh - 10f)..(hh + 10f)
+            } else {
+                val left = sym.x - hw - 8f
+                val right = sym.x + hw + 8f
+                val top = sym.y - hh - 8f
+                val bottom = sym.y + hh + 8f
+                logicalX in left..right && logicalY in top..bottom
+            }
         }
+
 
         if (hitSymbol != null) {
             if (_uiState.value.isMultiSelectMode) {
@@ -483,6 +495,87 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
         updateActivePageSymbols(updated)
     }
+
+    /**
+     * Moves selected symbols vertically in increments of half staff line spacing (occupying lines & spaces).
+     * Y decreases when moving UP and increases when moving DOWN.
+     * Preserves relative positions across multi-selection and enforces line 4 for ring sounds.
+     */
+    fun moveSelectedSymbolsVertical(directionUp: Boolean) {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) {
+            showNotification("ابتدا نماد مورد نظر را انتخاب کنید")
+            return
+        }
+
+        val page = project.activePage
+        val staves = page.generateStaves()
+        // Configurable step based on staff line spacing
+        val step = page.lineSpacing * 0.5f
+        val deltaY = if (directionUp) -step else step
+
+        recordUndo(page.symbols)
+
+        val updatedSymbols = page.symbols.map { sym ->
+            if (selectedIds.contains(sym.id)) {
+                if (sym.isRingSound) {
+                    val (fx, fy) = StaffSnapper.calculatePosition(
+                        candidateX = sym.x,
+                        candidateY = sym.y + deltaY,
+                        isRingSound = true,
+                        isSnapMode = false,
+                        staves = staves
+                    )
+                    sym.copy(y = fy)
+                } else {
+                    val candidateY = sym.y + deltaY
+                    val nearestStaff = staves.minByOrNull {
+                        val centerY = (it.line1Y + it.line4Y) / 2f
+                        Math.abs(centerY - candidateY)
+                    }
+                    val clampedY = if (nearestStaff != null) {
+                        candidateY.coerceIn(nearestStaff.line4Y - page.lineSpacing * 3f, nearestStaff.line1Y + page.lineSpacing * 3f)
+                    } else candidateY
+                    sym.copy(y = clampedY)
+                }
+            } else {
+                sym
+            }
+        }
+
+        updateActivePageSymbols(updatedSymbols)
+        triggerAutoSave()
+    }
+
+    /**
+     * Rotates selected symbols by exactly 30 degrees clockwise.
+     * 12 steps complete a full 360-degree rotation (0, 30, 60, ..., 330, 0).
+     */
+    fun rotateSelected() {
+        val project = _uiState.value.currentProject ?: return
+        val selectedIds = _uiState.value.selectedSymbolIds
+        if (selectedIds.isEmpty()) {
+            showNotification("ابتدا نماد مورد نظر را انتخاب کنید")
+            return
+        }
+
+        val page = project.activePage
+        recordUndo(page.symbols)
+
+        val updatedSymbols = page.symbols.map { sym ->
+            if (selectedIds.contains(sym.id)) {
+                val nextRot = ((sym.rotation + 30f) % 360f).let { if (it < 0f) it + 360f else it }
+                sym.copy(rotation = nextRot)
+            } else {
+                sym
+            }
+        }
+
+        updateActivePageSymbols(updatedSymbols)
+        triggerAutoSave()
+    }
+
 
     fun duplicateSelected() {
         val project = _uiState.value.currentProject ?: return
@@ -887,6 +980,13 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             repository.hideNoteDefinition(id, hidden)
         }
     }
+
+    fun toggleCustomSymbolHidden(id: String, hidden: Boolean) {
+        viewModelScope.launch {
+            repository.hideCustomSymbol(id, hidden)
+        }
+    }
+
 
     // --- IMPORT & EXPORT ACTIONS ---
 

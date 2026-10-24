@@ -45,8 +45,10 @@ class ScoreRepository(
 
     val allFolders: Flow<List<FolderEntity>> = dao.getAllFolders()
     val allCategories: Flow<List<CategoryEntity>> = dao.getAllCategories()
-    val allNoteDefinitions: Flow<List<NoteDefinitionEntity>> = dao.getAllActiveNoteDefinitions()
+    val allNoteDefinitions: Flow<List<NoteDefinitionEntity>> = dao.getAllNoteDefinitions()
+    val activeNoteDefinitions: Flow<List<NoteDefinitionEntity>> = dao.getAllActiveNoteDefinitions()
     val allCustomSymbols: Flow<List<CustomSymbolEntity>> = dao.getAllCustomSymbols()
+    val activeCustomSymbols: Flow<List<CustomSymbolEntity>> = dao.getAllActiveCustomSymbols()
 
     suspend fun getProjectById(id: String): ScoreProject? {
         val entity = dao.getProjectById(id) ?: return null
@@ -92,11 +94,26 @@ class ScoreRepository(
 
     // --- CATEGORY MANAGEMENT ---
 
+    private fun markCategoryDeleted(categoryId: String) {
+        val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE) ?: return
+        val currentSet = prefs.getStringSet("deleted_default_cats", emptySet())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(categoryId)
+        prefs.edit().putStringSet("deleted_default_cats", currentSet).apply()
+    }
+
+    private fun markNoteDefDeleted(noteId: String) {
+        val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE) ?: return
+        val currentSet = prefs.getStringSet("deleted_default_notes", emptySet())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(noteId)
+        prefs.edit().putStringSet("deleted_default_notes", currentSet).apply()
+    }
+
     suspend fun ensureDefaultCategories() {
         val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
         val hasSeeded = prefs?.getBoolean("has_seeded_default_cats", false) ?: false
         if (hasSeeded) return
 
+        val deletedCats = prefs?.getStringSet("deleted_default_cats", emptySet()) ?: emptySet()
         val existing = dao.getAllCategories().firstOrNull()
         if (existing.isNullOrEmpty()) {
             val defaults = listOf(
@@ -108,8 +125,10 @@ class ScoreRepository(
                 CategoryEntity("TIME_SIGNATURES", "میزان‌نما", 5, isDefault = true),
                 CategoryEntity("TEMPO_TEXT", "متن و علائم", 6, isDefault = true),
                 CategoryEntity("CUSTOM", "سفارشی", 7, isDefault = true)
-            )
-            dao.insertCategories(defaults)
+            ).filter { !deletedCats.contains(it.id) }
+            if (defaults.isNotEmpty()) {
+                dao.insertCategories(defaults)
+            }
             prefs?.edit()?.putBoolean("has_seeded_default_cats", true)?.apply()
         }
     }
@@ -130,20 +149,26 @@ class ScoreRepository(
      * to the fallback category ("NOTES" or "CUSTOM") so no symbol is ever orphaned.
      */
     suspend fun deleteCategorySafely(categoryId: String, fallbackCategoryId: String = "NOTES") {
+        markCategoryDeleted(categoryId)
         dao.reassignCategoryNotes(categoryId, fallbackCategoryId)
         dao.reassignCategoryCustomSymbols(categoryId, "CUSTOM")
         dao.deleteCategory(categoryId)
     }
 
     suspend fun deleteCategoryWithSymbols(categoryId: String) {
+        markCategoryDeleted(categoryId)
         val notes = dao.getAllNoteDefinitions().firstOrNull()?.filter { it.categoryId == categoryId } ?: emptyList()
-        notes.forEach { deleteNoteDefinitionSafely(it.id) }
+        notes.forEach { 
+            markNoteDefDeleted(it.id)
+            deleteNoteDefinitionSafely(it.id) 
+        }
         val customs = dao.getAllCustomSymbols().firstOrNull()?.filter { it.categoryId == categoryId } ?: emptyList()
         customs.forEach { deleteCustomSymbol(it.id) }
         dao.deleteCategory(categoryId)
     }
 
     suspend fun deleteCategoryAndMoveSymbols(categoryId: String, targetCategoryId: String) {
+        markCategoryDeleted(categoryId)
         dao.reassignCategoryNotes(categoryId, targetCategoryId)
         dao.reassignCategoryCustomSymbols(categoryId, targetCategoryId)
         dao.deleteCategory(categoryId)
@@ -156,6 +181,7 @@ class ScoreRepository(
         val hasSeeded = prefs?.getBoolean("has_seeded_default_notes", false) ?: false
         if (hasSeeded) return
 
+        val deletedNotes = prefs?.getStringSet("deleted_default_notes", emptySet()) ?: emptySet()
         val existing = dao.getAllNoteDefinitions().firstOrNull()
         if (existing.isNullOrEmpty()) {
             val defaults = listOf(
@@ -177,11 +203,14 @@ class ScoreRepository(
                 NoteDefinitionEntity("DEF_RING_ACCENT", "اشاره حلقه", "RING_ACCENT", "RING_SOUNDS", isRingSound = true, isDefault = true),
                 NoteDefinitionEntity("DEF_RING_DOUBLE", "حلقه جفتی", "RING_DOUBLE", "RING_SOUNDS", isRingSound = true, isDefault = true),
                 NoteDefinitionEntity("DEF_RING_THUMB", "شستی / پرتاب", "RING_THUMB_ROLL", "RING_SOUNDS", isRingSound = true, isDefault = true)
-            )
-            dao.insertNoteDefinitions(defaults)
+            ).filter { !deletedNotes.contains(it.id) }
+            if (defaults.isNotEmpty()) {
+                dao.insertNoteDefinitions(defaults)
+            }
             prefs?.edit()?.putBoolean("has_seeded_default_notes", true)?.apply()
         }
     }
+
 
     suspend fun addNoteDefinition(
         name: String,
@@ -329,6 +358,7 @@ class ScoreRepository(
                 try { File(path).delete() } catch (ignored: Exception) {}
             }
         }
+        markNoteDefDeleted(id)
         dao.deleteNoteDefinition(id)
     }
 
@@ -338,6 +368,10 @@ class ScoreRepository(
 
     suspend fun hideNoteDefinition(id: String, hidden: Boolean) {
         dao.setNoteDefinitionHidden(id, hidden)
+    }
+
+    suspend fun hideCustomSymbol(id: String, hidden: Boolean) {
+        dao.setCustomSymbolHidden(id, hidden)
     }
 
     // --- CUSTOM SYMBOLS MANAGEMENT WITH PERSISTENT INTERNAL STORAGE ---
