@@ -39,32 +39,29 @@ jobs:
           echo "Setting up stable signing keystore..."
 
           # Safe Diagnostics (Only reporting yes/no, never secret content)
-          if [ -f "debug.keystore.base64" ]; then
-            echo "Diagnostic: debug.keystore.base64 exists: yes"
-          else
-            echo "Diagnostic: debug.keystore.base64 exists: no"
-          fi
-
           if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-            echo "Diagnostic: RELEASE_KEYSTORE_BASE64 is set: yes"
+            echo "Diagnostic: GitHub Secret RELEASE_KEYSTORE_BASE64 is set: yes"
           else
-            echo "Diagnostic: RELEASE_KEYSTORE_BASE64 is set: no"
+            echo "Diagnostic: GitHub Secret RELEASE_KEYSTORE_BASE64 is set: no"
           fi
 
-          # Keystore Restoration Logic
           if [ -f "debug.keystore.base64" ]; then
+            echo "Diagnostic: Repository debug.keystore.base64 exists: yes"
+          else
+            echo "Diagnostic: Repository debug.keystore.base64 exists: no"
+          fi
+
+          # Keystore Restoration Logic (Prioritizing GitHub Secrets)
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
+            echo "Restoring persistent keystore from GitHub Secrets (RELEASE_KEYSTORE_BASE64)..."
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          elif [ -f "debug.keystore.base64" ]; then
             echo "Restoring persistent keystore from repository debug.keystore.base64..."
             base64 --decode debug.keystore.base64 > debug.keystore
-          elif [ -f "app/debug.keystore.base64" ]; then
-            echo "Restoring persistent keystore from app/debug.keystore.base64..."
-            base64 --decode app/debug.keystore.base64 > debug.keystore
-          elif [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-            echo "Restoring keystore from GitHub Secrets (RELEASE_KEYSTORE_BASE64)..."
-            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > debug.keystore
           elif [ -f "debug.keystore" ]; then
             echo "Using existing debug.keystore in workspace..."
           else
-            echo "Error: Persistent keystore is missing! Neither debug.keystore.base64 nor RELEASE_KEYSTORE_BASE64 is available." >&2
+            echo "Error: Persistent keystore is missing! Please configure RELEASE_KEYSTORE_BASE64 in GitHub Repository Secrets (Settings -> Secrets and variables -> Actions)." >&2
             exit 1
           fi
 
