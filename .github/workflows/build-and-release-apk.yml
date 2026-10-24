@@ -116,20 +116,26 @@ jobs:
             "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$TARGET_APK"
             CERT_INFO=$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$TARGET_APK")
             echo "$CERT_INFO"
-            EXTRACTED_SHA256=$(echo "$CERT_INFO" | grep -i "Signer #1 certificate SHA-256 digest:" | head -n 1 | awk '{print $NF}' || true)
+
+            # Robust fingerprint extraction (matches "V2 Signer: certificate SHA-256 digest:", "Signer #1...", etc.)
+            RAW_DIGEST=$(echo "$CERT_INFO" | grep -i "SHA-256 digest" | head -n 1 | awk '{print $NF}' | tr -d '[:space:]')
+            EXTRACTED_SHA256=$(echo "$RAW_DIGEST" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+
             if [ -z "$EXTRACTED_SHA256" ]; then
-              echo "Error: Could not extract Signer #1 certificate SHA-256 digest!" >&2
+              echo "Error: Could not extract certificate SHA-256 digest from apksigner output!" >&2
               exit 1
             fi
+
             echo "Extracted Certificate SHA-256: $EXTRACTED_SHA256"
             echo "Expected Certificate SHA-256:  $EXPECTED_SHA256"
-            if [ "${EXTRACTED_SHA256,,}" != "${EXPECTED_SHA256,,}" ]; then
+
+            if [ "$EXTRACTED_SHA256" != "$EXPECTED_SHA256" ]; then
               echo "Error: Certificate fingerprint mismatch! APK signature does not match expected persistent key." >&2
-              echo "Extracted: ${EXTRACTED_SHA256,,}" >&2
-              echo "Expected:  ${EXPECTED_SHA256,,}" >&2
+              echo "Extracted: $EXTRACTED_SHA256" >&2
+              echo "Expected:  $EXPECTED_SHA256" >&2
               exit 1
             fi
-            CERT_SHA256="${EXTRACTED_SHA256,,}"
+            CERT_SHA256="$EXTRACTED_SHA256"
           else
             echo "Error: apksigner tool not found in $BUILD_TOOLS_DIR!" >&2
             exit 1
