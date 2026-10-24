@@ -55,6 +55,9 @@ jobs:
           if [ -f "debug.keystore.base64" ]; then
             echo "Restoring persistent keystore from repository debug.keystore.base64..."
             base64 --decode debug.keystore.base64 > debug.keystore
+          elif [ -f "app/debug.keystore.base64" ]; then
+            echo "Restoring persistent keystore from app/debug.keystore.base64..."
+            base64 --decode app/debug.keystore.base64 > debug.keystore
           elif [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
             echo "Restoring keystore from GitHub Secrets (RELEASE_KEYSTORE_BASE64)..."
             printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > debug.keystore
