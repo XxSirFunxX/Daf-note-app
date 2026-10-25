@@ -55,3 +55,14 @@ data class CustomSymbolEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "help_topics")
+data class HelpTopicEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val content: String,
+    val orderIndex: Int = 0,
+    val isDefault: Boolean = false,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+

@@ -14,9 +14,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FolderEntity::class,
         CategoryEntity::class,
         NoteDefinitionEntity::class,
-        CustomSymbolEntity::class
+        CustomSymbolEntity::class,
+        HelpTopicEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -75,6 +76,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `help_topics` (
+                        `id` TEXT NOT NULL, 
+                        `title` TEXT NOT NULL, 
+                        `content` TEXT NOT NULL, 
+                        `orderIndex` INTEGER NOT NULL DEFAULT 0, 
+                        `isDefault` INTEGER NOT NULL DEFAULT 0, 
+                        `updatedAt` INTEGER NOT NULL DEFAULT 0, 
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -82,7 +99,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "chaharkhat_score.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                 INSTANCE = instance
                 instance

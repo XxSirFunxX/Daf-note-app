@@ -99,4 +99,23 @@ interface ProjectDao {
 
     @Query("UPDATE custom_symbols SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun reassignCategoryCustomSymbols(oldCategoryId: String, newCategoryId: String)
+
+    // --- HELP TOPICS ---
+    @Query("SELECT * FROM help_topics ORDER BY orderIndex ASC")
+    fun getAllHelpTopics(): Flow<List<HelpTopicEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHelpTopic(topic: HelpTopicEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHelpTopics(topics: List<HelpTopicEntity>)
+
+    @Update
+    suspend fun updateHelpTopic(topic: HelpTopicEntity)
+
+    @Query("DELETE FROM help_topics WHERE id = :id")
+    suspend fun deleteHelpTopic(id: String)
+
+    @Query("DELETE FROM help_topics")
+    suspend fun deleteAllHelpTopics()
 }

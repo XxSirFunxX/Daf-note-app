@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -72,6 +73,7 @@ fun ProjectsListScreen(
     onDuplicateProject: (ScoreProject) -> Unit,
     onDeleteProject: (ScoreProject) -> Unit,
     onOpenImport: () -> Unit,
+    onOpenHelp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -121,6 +123,9 @@ fun ProjectsListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onOpenHelp, modifier = Modifier.testTag("btn_help_projects_list")) {
+                        Icon(Icons.Default.HelpOutline, contentDescription = "راهنمای جامع نرم‌افزار")
+                    }
                     IconButton(onClick = onOpenImport, modifier = Modifier.testTag("btn_import_file")) {
                         Icon(Icons.Default.FileUpload, contentDescription = "وارد کردن فایل")
                     }

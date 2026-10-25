@@ -49,6 +49,7 @@ class ScoreRepository(
     val activeNoteDefinitions: Flow<List<NoteDefinitionEntity>> = dao.getAllActiveNoteDefinitions()
     val allCustomSymbols: Flow<List<CustomSymbolEntity>> = dao.getAllCustomSymbols()
     val activeCustomSymbols: Flow<List<CustomSymbolEntity>> = dao.getAllActiveCustomSymbols()
+    val allHelpTopics: Flow<List<HelpTopicEntity>> = dao.getAllHelpTopics()
 
     suspend fun getProjectById(id: String): ScoreProject? {
         val entity = dao.getProjectById(id) ?: return null
@@ -507,6 +508,157 @@ class ScoreRepository(
             }
         }
         dao.deleteCustomSymbol(id)
+    }
+
+    // --- HELP TOPICS MANAGEMENT ---
+
+    suspend fun ensureDefaultHelpTopics() {
+        val existing = dao.getAllHelpTopics().firstOrNull()
+        if (existing.isNullOrEmpty()) {
+            val defaults = getDefaultHelpTopics()
+            dao.insertHelpTopics(defaults)
+        }
+    }
+
+    fun getDefaultHelpTopics(): List<HelpTopicEntity> {
+        val now = System.currentTimeMillis()
+        return listOf(
+            HelpTopicEntity(
+                id = "HELP_STAFF_BASICS",
+                title = "معرفی حامل چهارخطی دف و تفاوت با ۵ خطی کلاسیک",
+                content = "ساز دف به عنوان ساز کوبه‌ای، به جای حامل پنج‌خطی استاندارد غربی از خط حامل چهارخطی بهره می‌برد.\n\n" +
+                        "• خط ۱ (پایین‌ترین خط): صدای بَم یا تُم (با دست راست یا چپ روی کاسه/پوست).\n" +
+                        "• خط ۲ و ۳ (خطوط و فواصل میانی): صداهای میانه و تکنیک‌های چپ و راست، اشاره‌ها و غلتک‌ها.\n" +
+                        "• خط ۴ (بالاترین خط): منحصراً برای صدای حلقه‌ها و زنجیرهای دف تخصیص یافته است.",
+                orderIndex = 0,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_RING_RULE",
+                title = "قانون انحصاری خط چهارم (صدای حلقه‌ها)",
+                content = "در نت‌نگار دف، تمام نمادهای متعلق به دسته «صدای حلقه‌ها» (شامل حلقه منفرد، ریز حلقه، اشاره حلقه، حلقه جفتی و شستی یا پرتاب حلقه) به صورت هوشمند و خودکار منحصراً روی خط چهارم حامل قرار می‌گیرند.\n\n" +
+                        "در هنگام جابه‌جایی این نمادها، موقعیت عمودی آنها روی خط چهارم حفظ شده و تغییر خط نمی‌دهند تا استاندارد نت‌نویسی دف مخدوش نگردد.",
+                orderIndex = 1,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_ADDING_NOTES",
+                title = "نت‌نویسی و جای‌گذاری نشانه‌ها",
+                content = "برای افزودن نت به صفحه:\n" +
+                        "۱. از پالت پایین صفحه، دسته‌بندی مورد نظر (نت‌ها، سکوت‌ها، حلقه‌ها، تکنیک‌ها و ...) را انتخاب کنید.\n" +
+                        "۲. روی نشانه یا نت مورد نظر بزنید تا فعال شود.\n" +
+                        "۳. روی هر نقطه‌ای از خط حامل بزنید تا نشانه در آن نقطه قرار گیرد.\n" +
+                        "۴. در صورت فعال بودن حالت «چسبیدن به خطوط» (آیکون شبکه در نوار سریع)، نشانه‌ها دقیقا روی خطوط و میان‌خطوط حامل تنظیم می‌شوند.",
+                orderIndex = 2,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_SELECTION_DRAG",
+                title = "انتخاب و جابه‌جایی نمادها",
+                content = "• انتخاب تک‌نماد: برای انتخاب هر نماد، کافیست روی آن لمس کنید. کادر نارنجی دور نماد ظاهر می‌شود.\n" +
+                        "• حالت چندانتخابی: با فعال کردن آیکون چندانتخابی در نوار سریع، می‌توانید چندین نماد را همزمان انتخاب کرده و با هم جابه‌جا یا ویرایش نمایید.\n" +
+                        "• کشیدن و رها کردن (Drag): نماد انتخاب‌شده را با انگشت روی صفحه به چپ، راست، بالا یا پایین بکشید.",
+                orderIndex = 3,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_QUICK_TOOLBAR",
+                title = "نوار ابزار سریع و کلیدهای میانبر",
+                content = "وقتی نمادی را انتخاب می‌کنید، نوار شناور گزینه‌های زیر را در اختیارتان می‌گذارد:\n" +
+                        "• فلش‌های بالا و پایین: انتقال عمودی نت بین خطوط و فواصل حامل بدون کشیدن دستی.\n" +
+                        "• چرخش ۳۰ درجه: چرخش زاویه‌ای نماد با هر بار لمس.\n" +
+                        "• بزرگ‌نمایی (+) و کوچک‌نمایی (-): تغییر مقیاس اندازه نماد.\n" +
+                        "• معکوس‌کردن دم نت: تغییر جهت دم نت به بالا یا پایین.\n" +
+                        "• کپی (Duplicate): تکثیر سریع نمادهای انتخاب‌شده.\n" +
+                        "• حذف (Delete): پاک کردن نماد از روی خط حامل.",
+                orderIndex = 4,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_CUSTOM_IMAGES",
+                title = "افزودن و مدیریت نمادهای تصویری (PNG و SVG)",
+                content = "شما می‌توانید هر نماد، نشانه ابداعی یا رسم‌الخط اختصاصی را با فرمت PNG یا SVG وارد کنید:\n" +
+                        "• از منوی بالای ویرایشگر یا دکمه «جدید» در پالت سفارشی، گزینه مدیریت نمادهای سفارشی را انتخاب نمایید.\n" +
+                        "• تصاویر با پس‌زمینه شفاف (Transparent) بهترین کیفیت نمایش را دارند.\n" +
+                        "• تمام تصاویر وارد شده در حافظه داخلی دستگاه و کش با سرعت بالا ذخیره می‌شوند و حتی پس از ذخیره و بازگشایی پروژه همواره حفظ خواهند بود.",
+                orderIndex = 5,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_TEXT_ANNOTATIONS",
+                title = "یادداشت‌ها و متن‌های سفارشی روی حامل",
+                content = "برای افزودن متن، اشعار، نام بندها (مانند «بند اول» یا «تکرار») و نشانه‌های تمپو و توضیحات معلم روی حامل:\n" +
+                        "• روی دکمه ابزار متن (آیکون T) در نوار ابزار کلیک کنید.\n" +
+                        "• متن دلخواه را بنویسید، اندازه قلم، حالت ضخیم (Bold)، کج (Italic)، تراز و رنگ قلم را مشخص کنید.\n" +
+                        "• متن روی حامل قرار می‌گیرد و می‌توانید آن را آزادانه جابه‌جا، بچرخانید و دوباره ویرایش نمایید.",
+                orderIndex = 6,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_PAGE_SETTINGS",
+                title = "مدیریت صفحات و تنظیمات خطوط حامل",
+                content = "از منوی بالای ویرایشگر می‌توانید:\n" +
+                        "• مدیریت صفحات: افزودن صفحات جدید، تغییر ترتیب صفحات و حذف صفحه فعال.\n" +
+                        "• تنظیمات صفحه: تغییر قطع کاغذ (A4 یا A5)، تعیین تعداد میزان‌ها و خطوط حامل در هر صفحه، فاصله پیش‌فرض خطوط و فاصله اختصاصی خط چهارم حلقه‌ها.",
+                orderIndex = 7,
+                isDefault = true,
+                updatedAt = now
+            ),
+            HelpTopicEntity(
+                id = "HELP_EXPORT_BACKUP",
+                title = "صدور خروجی PDF، تصویر و فایل پروژه (.dafnt)",
+                content = "نت‌نگار دف امکان دریافت خروجی‌های حرفه‌ای را فراهم می‌کند:\n" +
+                        "• خروجی PDF: سندی استاندارد و با کیفیت وکتور، آماده برای چاپ روی کاغذ و انتشار کتابچه آموزشی.\n" +
+                        "• خروجی تصویر (PNG و JPEG): با وضوح بالا برای اشتراک‌گذاری در پیام‌رسان‌ها.\n" +
+                        "• خروجی فایل پروژه (.dafnt): تمام نت‌ها، نشانه‌های سفارشی و متون در یک فایل اختصاصی ذخیره می‌شوند تا بتوانید در دستگاه دیگر یا در آینده مجدداً آن را ویرایش کنید.",
+                orderIndex = 8,
+                isDefault = true,
+                updatedAt = now
+            )
+        )
+    }
+
+    suspend fun addHelpTopic(title: String, content: String): HelpTopicEntity {
+        val all = dao.getAllHelpTopics().firstOrNull() ?: emptyList()
+        val nextOrder = (all.maxOfOrNull { it.orderIndex } ?: -1) + 1
+        val entity = HelpTopicEntity(
+            id = UUID.randomUUID().toString(),
+            title = title.trim(),
+            content = content.trim(),
+            orderIndex = nextOrder,
+            isDefault = false,
+            updatedAt = System.currentTimeMillis()
+        )
+        dao.insertHelpTopic(entity)
+        return entity
+    }
+
+    suspend fun updateHelpTopic(topic: HelpTopicEntity) {
+        dao.updateHelpTopic(topic.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteHelpTopic(id: String) {
+        dao.deleteHelpTopic(id)
+    }
+
+    suspend fun reorderHelpTopics(reorderedTopics: List<HelpTopicEntity>) {
+        val updated = reorderedTopics.mapIndexed { index, topic ->
+            topic.copy(orderIndex = index, updatedAt = System.currentTimeMillis())
+        }
+        dao.insertHelpTopics(updated)
+    }
+
+    suspend fun resetHelpTopicsToDefault() {
+        dao.deleteAllHelpTopics()
+        val defaults = getDefaultHelpTopics()
+        dao.insertHelpTopics(defaults)
     }
 
     /**

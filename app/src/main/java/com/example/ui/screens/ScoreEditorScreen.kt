@@ -36,13 +36,17 @@ import com.example.ui.components.EditorTopBar
 import com.example.ui.components.FloatingQuickToolbar
 import com.example.ui.components.ScoreCanvasView
 import com.example.ui.components.SymbolLibrarySheet
+import com.example.model.ScoreSymbol
+import com.example.model.SymbolType
 import com.example.ui.dialogs.CategoryManagerDialog
 import com.example.ui.dialogs.CustomSymbolsManagerDialog
 import com.example.ui.dialogs.ExportDialog
+import com.example.ui.dialogs.HelpDialog
 import com.example.ui.dialogs.ImportDialog
 import com.example.ui.dialogs.NoteDefinitionsManagerDialog
 import com.example.ui.dialogs.PageManagerDialog
 import com.example.ui.dialogs.PageSettingsDialog
+import com.example.ui.dialogs.TextAnnotationDialog
 import com.example.viewmodel.EditorUiState
 import com.example.viewmodel.ScoreViewModel
 
@@ -75,6 +79,14 @@ fun ScoreEditorScreen(
     var showCustomSymbolsDialog by remember { mutableStateOf(false) }
     var showCategoryManagerDialog by remember { mutableStateOf(false) }
     var showNoteManagerDialog by remember { mutableStateOf(false) }
+    var showHelpDialog by remember { mutableStateOf(false) }
+    var showTextAnnotationDialog by remember { mutableStateOf(false) }
+    var textAnnotationToEdit by remember { mutableStateOf<ScoreSymbol?>(null) }
+
+    val selectedTextSymbol = project.activePage.symbols.find {
+        state.selectedSymbolIds.contains(it.id) && it.type == SymbolType.TEXT_ANNOTATION
+    }
+    val isTextSelected = selectedTextSymbol != null
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -107,7 +119,8 @@ fun ScoreEditorScreen(
                 onOpenPageSettings = { showPageSettings = true },
                 onOpenExport = { showExportDialog = true },
                 onOpenImport = { showImportDialog = true },
-                onOpenCustomSymbols = { showCustomSymbolsDialog = true }
+                onOpenCustomSymbols = { showCustomSymbolsDialog = true },
+                onOpenHelp = { showHelpDialog = true }
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -171,6 +184,15 @@ fun ScoreEditorScreen(
                 onToggleGuides = { viewModel.toggleGuides() },
                 onToggleLine4 = { viewModel.toggleLine4Highlight() },
                 onResetZoom = { viewModel.resetZoom() },
+                onAddTextAnnotation = {
+                    textAnnotationToEdit = null
+                    showTextAnnotationDialog = true
+                },
+                isTextSelected = isTextSelected,
+                onEditTextAnnotation = {
+                    textAnnotationToEdit = selectedTextSymbol
+                    showTextAnnotationDialog = true
+                },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
 
@@ -282,6 +304,52 @@ fun ScoreEditorScreen(
             },
             onDeleteNoteDefinition = { id ->
                 viewModel.deleteNoteDefinition(id)
+            }
+        )
+    }
+
+    if (showHelpDialog) {
+        HelpDialog(
+            topics = state.helpTopicsList,
+            onDismiss = { showHelpDialog = false },
+            onAddTopic = { title, content -> viewModel.addHelpTopic(title, content) },
+            onUpdateTopic = { topic -> viewModel.updateHelpTopic(topic) },
+            onDeleteTopic = { id -> viewModel.deleteHelpTopic(id) },
+            onReorderTopics = { reordered -> viewModel.reorderHelpTopics(reordered) },
+            onResetToDefaults = { viewModel.resetHelpTopicsToDefault() }
+        )
+    }
+
+    if (showTextAnnotationDialog) {
+        TextAnnotationDialog(
+            initialSymbol = textAnnotationToEdit,
+            onDismiss = {
+                showTextAnnotationDialog = false
+                textAnnotationToEdit = null
+            },
+            onConfirm = { text, fontSizeSp, isBold, isItalic, alignment, colorHex ->
+                if (textAnnotationToEdit != null) {
+                    viewModel.updateTextAnnotation(
+                        symbolId = textAnnotationToEdit!!.id,
+                        text = text,
+                        fontSizeSp = fontSizeSp,
+                        isBold = isBold,
+                        isItalic = isItalic,
+                        alignment = alignment,
+                        colorHex = colorHex
+                    )
+                } else {
+                    viewModel.addTextAnnotation(
+                        text = text,
+                        fontSizeSp = fontSizeSp,
+                        isBold = isBold,
+                        isItalic = isItalic,
+                        alignment = alignment,
+                        colorHex = colorHex
+                    )
+                }
+                showTextAnnotationDialog = false
+                textAnnotationToEdit = null
             }
         )
     }

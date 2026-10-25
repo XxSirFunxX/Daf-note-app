@@ -41,6 +41,9 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
@@ -95,10 +98,10 @@ fun EditorTopBar(
     onOpenExport: () -> Unit,
     onOpenImport: () -> Unit,
     onOpenCustomSymbols: () -> Unit,
+    onOpenHelp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    var verticalMenuExpanded by remember { mutableStateOf(false) }
 
     TopAppBar(
         title = {
@@ -126,52 +129,6 @@ fun EditorTopBar(
             }
         },
         actions = {
-            // Vertical movement control popup
-            Box {
-                IconButton(
-                    onClick = {
-                        if (hasSelection) {
-                            verticalMenuExpanded = true
-                        } else {
-                            onNoSelection()
-                        }
-                    },
-                    modifier = Modifier.testTag("btn_vertical_movement")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SwapVert,
-                        contentDescription = "انتقال عمودی نماد بین خطوط حامل",
-                        tint = if (hasSelection) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f)
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = verticalMenuExpanded && hasSelection,
-                    onDismissRequest = { verticalMenuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("انتقال به بالا (خط/فاصله)") },
-                        leadingIcon = {
-                            Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        },
-                        onClick = {
-                            onMoveUp()
-                        },
-                        modifier = Modifier.testTag("menu_move_up")
-                    )
-                    DropdownMenuItem(
-                        text = { Text("انتقال به پایین (خط/فاصله)") },
-                        leadingIcon = {
-                            Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        },
-                        onClick = {
-                            onMoveDown()
-                        },
-                        modifier = Modifier.testTag("menu_move_down")
-                    )
-                }
-            }
-
             // Undo
             IconButton(
                 onClick = onUndo,
@@ -253,6 +210,12 @@ fun EditorTopBar(
                         onClick = { menuExpanded = false; onOpenCustomSymbols() },
                         modifier = Modifier.testTag("menu_custom_symbols")
                     )
+                    DropdownMenuItem(
+                        text = { Text("راهنمای جامع نرم‌افزار") },
+                        leadingIcon = { Icon(Icons.Default.HelpOutline, contentDescription = null) },
+                        onClick = { menuExpanded = false; onOpenHelp() },
+                        modifier = Modifier.testTag("menu_help")
+                    )
                 }
             }
         },
@@ -283,6 +246,9 @@ fun FloatingQuickToolbar(
     onToggleGuides: () -> Unit,
     onToggleLine4: () -> Unit,
     onResetZoom: () -> Unit,
+    onAddTextAnnotation: () -> Unit = {},
+    isTextSelected: Boolean = false,
+    onEditTextAnnotation: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -365,6 +331,19 @@ fun FloatingQuickToolbar(
                 Icon(Icons.Default.ZoomOutMap, contentDescription = "اندازه پیش‌فرض ۱۰۰٪", modifier = Modifier.size(18.dp))
             }
 
+            // Text Annotation Tool
+            IconButton(
+                onClick = onAddTextAnnotation,
+                modifier = Modifier.size(34.dp).testTag("btn_add_text_annotation")
+            ) {
+                Icon(
+                    Icons.Default.TextFields,
+                    contentDescription = "افزودن یادداشت متنی",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
             // Selection-dependent actions
             if (hasSelection) {
                 Box(
@@ -372,6 +351,21 @@ fun FloatingQuickToolbar(
                         .size(1.dp, 24.dp)
                         .background(Color(0xFFD6D0C5))
                 )
+
+                if (isTextSelected) {
+                    // Edit Text
+                    IconButton(
+                        onClick = onEditTextAnnotation,
+                        modifier = Modifier.size(36.dp).testTag("btn_edit_text_annotation")
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "ویرایش متن یادداشت",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
 
                 // Move Up (vertical movement between lines/spaces)
                 IconButton(

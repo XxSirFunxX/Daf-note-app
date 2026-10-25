@@ -1381,10 +1381,12 @@ fun CustomSymbolsManagerDialog(
                     onClick = {
                         if (editName.isNotBlank()) {
                             val newUri = editNewImageUri
+                            val updatedSym = sym.copy(name = editName.trim(), categoryId = editCategoryId, isRingSound = editIsRingSound)
                             if (newUri != null) {
-                                onReplaceImage(sym, newUri)
+                                onReplaceImage(updatedSym, newUri)
+                            } else {
+                                onUpdateCustom(updatedSym)
                             }
-                            onUpdateCustom(sym.copy(name = editName, categoryId = editCategoryId, isRingSound = editIsRingSound))
                             editingSymbol = null
                         }
                     },

@@ -9,6 +9,7 @@ import com.example.data.AppDatabase
 import com.example.data.CategoryEntity
 import com.example.data.CustomSymbolEntity
 import com.example.data.FolderEntity
+import com.example.data.HelpTopicEntity
 import com.example.data.NoteDefinitionEntity
 import com.example.data.ScoreRepository
 import com.example.editor.UndoRedoManager
@@ -70,7 +71,8 @@ data class EditorUiState(
     val notificationMessage: String? = null,
     val referenceImageUri: String? = null,
     val showReferenceBackdrop: Boolean = false,
-    val isSaving: Boolean = false
+    val isSaving: Boolean = false,
+    val helpTopicsList: List<HelpTopicEntity> = emptyList()
 )
 
 class ScoreViewModel(application: Application) : AndroidViewModel(application) {
@@ -89,6 +91,7 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.ensureDefaultCategories()
             repository.ensureDefaultNoteDefinitions()
+            repository.ensureDefaultHelpTopics()
         }
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -137,6 +140,12 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(customSymbolsList = custom) }
             }
         }
+
+        viewModelScope.launch {
+            repository.allHelpTopics.collectLatest { topics ->
+                _uiState.update { it.copy(helpTopicsList = topics) }
+            }
+        }
     }
 
     // --- NAVIGATION ---
@@ -147,9 +156,34 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openProject(project: ScoreProject) {
         undoManager.clear()
+        val customMap = _uiState.value.customSymbolsList.associateBy { it.id }
+        var hasResynced = false
+        val syncedPages = project.pages.map { page ->
+            val syncedSymbols = page.symbols.map { sym ->
+                if (sym.type == SymbolType.CUSTOM_SYMBOL && sym.customData != null) {
+                    val matchingCustom = customMap[sym.customData]
+                    if (matchingCustom != null && !matchingCustom.imagePath.isNullOrBlank()) {
+                        val currentFile = sym.imagePath?.let { java.io.File(it) }
+                        if (currentFile == null || !currentFile.exists() || sym.imagePath != matchingCustom.imagePath) {
+                            hasResynced = true
+                            sym.copy(imagePath = matchingCustom.imagePath, name = matchingCustom.name, isRingSound = matchingCustom.isRingSound)
+                        } else {
+                            sym
+                        }
+                    } else {
+                        sym
+                    }
+                } else {
+                    sym
+                }
+            }
+            page.copy(symbols = syncedSymbols)
+        }
+        val targetProject = if (hasResynced) project.copy(pages = syncedPages) else project
+
         _uiState.update {
             it.copy(
-                currentProject = project,
+                currentProject = targetProject,
                 currentScreen = EditorScreen.ScoreEditor,
                 selectedSymbolIds = emptySet(),
                 canUndo = false,
@@ -158,6 +192,9 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 panOffsetX = 0f,
                 panOffsetY = 0f
             )
+        }
+        if (hasResynced) {
+            viewModelScope.launch { repository.saveProject(targetProject) }
         }
     }
 
@@ -441,14 +478,18 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 val candidateX = sym.x + deltaX
                 val candidateY = sym.y + deltaY
 
-                val (fx, fy) = StaffSnapper.calculatePosition(
-                    candidateX = candidateX,
-                    candidateY = candidateY,
-                    isRingSound = sym.isRingSound,
-                    isSnapMode = _uiState.value.isSnapMode,
-                    staves = staves
-                )
-                sym.copy(x = fx, y = fy)
+                if (sym.type == SymbolType.TEXT_ANNOTATION) {
+                    sym.copy(x = candidateX, y = candidateY)
+                } else {
+                    val (fx, fy) = StaffSnapper.calculatePosition(
+                        candidateX = candidateX,
+                        candidateY = candidateY,
+                        isRingSound = sym.isRingSound,
+                        isSnapMode = _uiState.value.isSnapMode,
+                        staves = staves
+                    )
+                    sym.copy(x = fx, y = fy)
+                }
             } else {
                 sym
             }
@@ -824,10 +865,34 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         onResult: ((Boolean, String?) -> Unit)? = null
     ) {
         viewModelScope.launch {
+            val oldPath = symbol.imagePath
             val (updated, error) = repository.replaceCustomSymbolImage(context, symbol, newImageUri)
             if (updated != null) {
+                if (oldPath != null) {
+                    com.example.util.CustomSymbolImageHelper.evict(oldPath)
+                }
                 if (_uiState.value.activeCustomSymbol?.id == updated.id) {
                     _uiState.update { it.copy(activeCustomSymbol = updated) }
+                }
+                val proj = _uiState.value.currentProject
+                if (proj != null) {
+                    var modified = false
+                    val updatedPages = proj.pages.map { page ->
+                        val newSymbols = page.symbols.map { s ->
+                            if (s.customData == updated.id || (oldPath != null && s.imagePath == oldPath)) {
+                                modified = true
+                                s.copy(imagePath = updated.imagePath, name = updated.name, isRingSound = updated.isRingSound)
+                            } else {
+                                s
+                            }
+                        }
+                        page.copy(symbols = newSymbols)
+                    }
+                    if (modified) {
+                        val updatedProj = proj.copy(pages = updatedPages, updatedAt = System.currentTimeMillis())
+                        _uiState.update { it.copy(currentProject = updatedProj) }
+                        repository.saveProject(updatedProj)
+                    }
                 }
                 showNotification("تصویر نماد سفارشی '${updated.name}' با موفقیت تغییر یافت")
                 onResult?.invoke(true, null)
@@ -857,6 +922,26 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             repository.updateCustomSymbol(symbol)
             if (_uiState.value.activeCustomSymbol?.id == symbol.id) {
                 _uiState.update { it.copy(activeCustomSymbol = symbol) }
+            }
+            val proj = _uiState.value.currentProject
+            if (proj != null) {
+                var modified = false
+                val updatedPages = proj.pages.map { page ->
+                    val newSymbols = page.symbols.map { s ->
+                        if (s.customData == symbol.id) {
+                            modified = true
+                            s.copy(name = symbol.name, isRingSound = symbol.isRingSound, imagePath = symbol.imagePath ?: s.imagePath)
+                        } else {
+                            s
+                        }
+                    }
+                    page.copy(symbols = newSymbols)
+                }
+                if (modified) {
+                    val updatedProj = proj.copy(pages = updatedPages, updatedAt = System.currentTimeMillis())
+                    _uiState.update { it.copy(currentProject = updatedProj) }
+                    repository.saveProject(updatedProj)
+                }
             }
             showNotification("اطلاعات نماد سفارشی '${symbol.name}' بروزرسانی شد")
         }
@@ -987,6 +1072,115 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- TEXT ANNOTATIONS ---
+
+    fun addTextAnnotation(
+        text: String,
+        fontSizeSp: Float = 14f,
+        isBold: Boolean = false,
+        isItalic: Boolean = false,
+        alignment: String = "right",
+        colorHex: String = "#1C1A18",
+        candidateX: Float? = null,
+        candidateY: Float? = null
+    ) {
+        val project = _uiState.value.currentProject ?: return
+        val page = project.activePage
+
+        val posX = candidateX ?: (page.paperSize.widthPt / 2f)
+        val posY = candidateY ?: (page.marginTop - 20f)
+
+        recordUndo(page.symbols)
+
+        val stylingData = "bold=$isBold;italic=$isItalic;align=$alignment;fontSize=$fontSizeSp"
+        val scaleVal = (fontSizeSp / 14f).coerceIn(0.5f, 3.5f)
+
+        val newSymbol = ScoreSymbol(
+            type = SymbolType.TEXT_ANNOTATION,
+            category = SymbolCategory.TEMPO_TEXT,
+            name = text.take(15),
+            x = posX,
+            y = posY,
+            scale = scaleVal,
+            textValue = text,
+            customData = stylingData,
+            colorHex = colorHex
+        )
+
+        val updated = page.symbols + newSymbol
+        updateActivePageSymbols(updated)
+        _uiState.update { it.copy(selectedSymbolIds = setOf(newSymbol.id)) }
+        showNotification("یادداشت متنی افزوده شد")
+    }
+
+    fun updateTextAnnotation(
+        symbolId: String,
+        text: String,
+        fontSizeSp: Float = 14f,
+        isBold: Boolean = false,
+        isItalic: Boolean = false,
+        alignment: String = "right",
+        colorHex: String = "#1C1A18"
+    ) {
+        val project = _uiState.value.currentProject ?: return
+        val page = project.activePage
+
+        recordUndo(page.symbols)
+
+        val stylingData = "bold=$isBold;italic=$isItalic;align=$alignment;fontSize=$fontSizeSp"
+        val scaleVal = (fontSizeSp / 14f).coerceIn(0.5f, 3.5f)
+
+        val updated = page.symbols.map { sym ->
+            if (sym.id == symbolId) {
+                sym.copy(
+                    textValue = text,
+                    name = text.take(15),
+                    customData = stylingData,
+                    scale = scaleVal,
+                    colorHex = colorHex
+                )
+            } else sym
+        }
+
+        updateActivePageSymbols(updated)
+        showNotification("یادداشت متنی بروزرسانی شد")
+    }
+
+    // --- HELP TOPICS ---
+
+    fun addHelpTopic(title: String, content: String) {
+        viewModelScope.launch {
+            repository.addHelpTopic(title, content)
+            showNotification("مبحث راهنما افزوده شد")
+        }
+    }
+
+    fun updateHelpTopic(topic: HelpTopicEntity) {
+        viewModelScope.launch {
+            repository.updateHelpTopic(topic)
+            showNotification("مبحث راهنما بروزرسانی شد")
+        }
+    }
+
+    fun deleteHelpTopic(id: String) {
+        viewModelScope.launch {
+            repository.deleteHelpTopic(id)
+            showNotification("مبحث راهنما حذف شد")
+        }
+    }
+
+    fun reorderHelpTopics(reordered: List<HelpTopicEntity>) {
+        viewModelScope.launch {
+            repository.reorderHelpTopics(reordered)
+        }
+    }
+
+    fun resetHelpTopicsToDefault() {
+        viewModelScope.launch {
+            repository.resetHelpTopicsToDefault()
+            showNotification("مباحث راهنما به حالت پیش‌فرض بازنشانی شدند")
+        }
+    }
 
     // --- IMPORT & EXPORT ACTIONS ---
 

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.RectF
 import android.net.Uri
+import android.util.LruCache
 import com.caverock.androidsvg.SVG
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -126,46 +127,133 @@ object CustomSymbolImageHelper {
                 (sample.startsWith("<?xml") && sample.contains("<svg"))
     }
 
+    private val maxCacheMemory = (Runtime.getRuntime().maxMemory() / 8).toInt().coerceIn(16 * 1024 * 1024, 64 * 1024 * 1024)
+    private val memoryCache: LruCache<String, Bitmap> = object : LruCache<String, Bitmap>(maxCacheMemory) {
+        override fun sizeOf(key: String, bitmap: Bitmap): Int {
+            return bitmap.byteCount
+        }
+    }
+
+    /**
+     * Evicts cached representations of the given file path.
+     */
+    fun evict(filePath: String) {
+        val snapshot = memoryCache.snapshot()
+        for (key in snapshot.keys) {
+            if (key.startsWith(filePath)) {
+                memoryCache.remove(key)
+            }
+        }
+    }
+
+    /**
+     * Clears all cached images.
+     */
+    fun clearCache() {
+        memoryCache.evictAll()
+    }
+
     /**
      * Loads either a Bitmap or rasterizes an SVG file into a Bitmap at the requested dimensions.
+     * Uses memory cache to prevent repeated decoding during drawing and recomposition.
      */
-    fun loadBitmap(file: File, targetSize: Int = 120): Bitmap? {
+    fun loadBitmap(file: File, targetSize: Int = 256): Bitmap? {
         if (!file.exists()) return null
 
+        val cacheKey = "${file.absolutePath}:$targetSize:${file.lastModified()}"
+        synchronized(memoryCache) {
+            val cached = memoryCache.get(cacheKey)
+            if (cached != null && !cached.isRecycled) {
+                return cached
+            }
+        }
+
         val isSvg = file.name.endsWith(".svg", ignoreCase = true)
-        if (isSvg) {
-            return try {
+        val decoded: Bitmap? = if (isSvg) {
+            try {
                 file.inputStream().use { stream ->
                     renderSvgToBitmap(stream, targetSize, targetSize)
                 }
             } catch (e: Exception) {
                 null
             }
+        } else {
+            decodeSampledBitmap(file, targetSize, targetSize)
+                ?: try {
+                    file.inputStream().use { stream ->
+                        renderSvgToBitmap(stream, targetSize, targetSize)
+                    }
+                } catch (e: Exception) {
+                    null
+                }
         }
 
-        // Try standard decode
-        val bmp = BitmapFactory.decodeFile(file.absolutePath)
-        if (bmp != null) return bmp
-
-        // Fallback: try SVG in case extension wasn't .svg
-        return try {
-            file.inputStream().use { stream ->
-                renderSvgToBitmap(stream, targetSize, targetSize)
+        if (decoded != null) {
+            synchronized(memoryCache) {
+                memoryCache.put(cacheKey, decoded)
             }
+        }
+
+        return decoded
+    }
+
+    private fun decodeSampledBitmap(file: File, reqWidth: Int, reqHeight: Int): Bitmap? {
+        return try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null
+
+            var inSampleSize = 1
+            val (height: Int, width: Int) = options.outHeight to options.outWidth
+
+            if (height > reqHeight || width > reqWidth) {
+                val halfHeight: Int = height / 2
+                val halfWidth: Int = width / 2
+                while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                    inSampleSize *= 2
+                }
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
         } catch (e: Exception) {
             null
         }
     }
 
     /**
-     * Renders an SVG stream into an Android ARGB_8888 Bitmap.
+     * Renders an SVG stream into an Android ARGB_8888 Bitmap preserving aspect ratio.
      */
     fun renderSvgToBitmap(stream: InputStream, width: Int, height: Int): Bitmap? {
         return try {
             val svg = SVG.getFromInputStream(stream)
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val docW = svg.documentWidth
+            val docH = svg.documentHeight
+            val targetW: Int
+            val targetH: Int
+
+            if (docW > 0 && docH > 0) {
+                val ratio = docW / docH
+                if (ratio >= 1f) {
+                    targetW = width
+                    targetH = (width / ratio).toInt().coerceAtLeast(1)
+                } else {
+                    targetH = height
+                    targetW = (height * ratio).toInt().coerceAtLeast(1)
+                }
+            } else {
+                targetW = width
+                targetH = height
+            }
+
+            val bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bitmap)
-            val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            val rect = RectF(0f, 0f, targetW.toFloat(), targetH.toFloat())
             svg.renderToCanvas(canvas, rect)
             bitmap
         } catch (e: Exception) {

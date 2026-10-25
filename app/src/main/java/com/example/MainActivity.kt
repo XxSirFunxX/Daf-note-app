@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ui.dialogs.HelpDialog
 import com.example.ui.dialogs.ImportDialog
 import com.example.ui.screens.ProjectsListScreen
 import com.example.ui.screens.ScoreEditorScreen
@@ -48,6 +49,7 @@ class MainActivity : ComponentActivity() {
 fun ScoreApp(scoreViewModel: ScoreViewModel = viewModel()) {
     val state by scoreViewModel.uiState.collectAsStateWithLifecycle()
     var showImportDialog by remember { mutableStateOf(false) }
+    var showHelpDialog by remember { mutableStateOf(false) }
 
     if (state.currentProject != null) {
         ScoreEditorScreen(
@@ -64,7 +66,8 @@ fun ScoreApp(scoreViewModel: ScoreViewModel = viewModel()) {
             onCreateProject = { scoreViewModel.createNewProject(it) },
             onDuplicateProject = { scoreViewModel.duplicateProject(it) },
             onDeleteProject = { scoreViewModel.deleteProject(it) },
-            onOpenImport = { showImportDialog = true }
+            onOpenImport = { showImportDialog = true },
+            onOpenHelp = { showHelpDialog = true }
         )
 
         if (showImportDialog) {
@@ -73,6 +76,18 @@ fun ScoreApp(scoreViewModel: ScoreViewModel = viewModel()) {
                 onImportContent = { content ->
                     scoreViewModel.importProjectContent(content)
                 }
+            )
+        }
+
+        if (showHelpDialog) {
+            HelpDialog(
+                topics = state.helpTopicsList,
+                onDismiss = { showHelpDialog = false },
+                onAddTopic = { title, content -> scoreViewModel.addHelpTopic(title, content) },
+                onUpdateTopic = { topic -> scoreViewModel.updateHelpTopic(topic) },
+                onDeleteTopic = { id -> scoreViewModel.deleteHelpTopic(id) },
+                onReorderTopics = { reordered -> scoreViewModel.reorderHelpTopics(reordered) },
+                onResetToDefaults = { scoreViewModel.resetHelpTopicsToDefault() }
             )
         }
     }

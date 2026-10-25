@@ -64,6 +64,7 @@ enum class SymbolType(
     TEXT_DYNAMIC_P("دینامیک piano (p)", SymbolCategory.TEMPO_TEXT),
     TEXT_DYNAMIC_MF("دینامیک mezzo forte (mf)", SymbolCategory.TEMPO_TEXT),
     TEXT_LESSON_BADGE("شماره درس", SymbolCategory.TEMPO_TEXT),
+    TEXT_ANNOTATION("متن و یادداشت", SymbolCategory.TEMPO_TEXT),
 
     // 8. Custom user symbol
     CUSTOM_SYMBOL("نماد سفارشی", SymbolCategory.CUSTOM)

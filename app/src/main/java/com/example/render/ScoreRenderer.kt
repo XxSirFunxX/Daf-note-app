@@ -79,6 +79,10 @@ object ScoreRenderer {
         style = Paint.Style.FILL
     }
 
+    private val customBitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        isFilterBitmap = true
+    }
+
     /**
      * Renders the complete score page onto any standard Android Canvas.
      */
@@ -260,6 +264,7 @@ object ScoreRenderer {
             SymbolType.TEXT_DYNAMIC_P -> drawDynamicText(canvas, "p")
             SymbolType.TEXT_DYNAMIC_MF -> drawDynamicText(canvas, "mf")
             SymbolType.TEXT_LESSON_BADGE -> drawLessonBadge(canvas, symbol.textValue ?: "۱")
+            SymbolType.TEXT_ANNOTATION -> drawTextAnnotation(canvas, symbol)
 
             // Custom
             SymbolType.CUSTOM_SYMBOL -> drawCustomSymbol(canvas, symbol)
@@ -656,17 +661,85 @@ object ScoreRenderer {
         canvas.drawText(text, 0f, 5f, paint)
     }
 
+    private fun drawTextAnnotation(canvas: Canvas, symbol: ScoreSymbol) {
+        val rawText = symbol.textValue ?: symbol.name
+        if (rawText.isBlank()) return
+
+        var isBold = false
+        var isItalic = false
+        var align = Paint.Align.RIGHT
+
+        symbol.customData?.let { data ->
+            for (part in data.split(";")) {
+                val kv = part.split("=")
+                if (kv.size == 2) {
+                    when (kv[0].trim().lowercase()) {
+                        "bold" -> isBold = kv[1].trim().toBoolean()
+                        "italic" -> isItalic = kv[1].trim().toBoolean()
+                        "align" -> when (kv[1].trim().lowercase()) {
+                            "left" -> align = Paint.Align.LEFT
+                            "center" -> align = Paint.Align.CENTER
+                            "right" -> align = Paint.Align.RIGHT
+                        }
+                    }
+                }
+            }
+        }
+
+        val textColor = try {
+            Color.parseColor(symbol.colorHex)
+        } catch (e: Exception) {
+            Color.parseColor("#1C1A18")
+        }
+
+        val tf = when {
+            isBold && isItalic -> Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
+            isBold -> Typeface.DEFAULT_BOLD
+            isItalic -> Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
+            else -> Typeface.DEFAULT
+        }
+
+        val isPreview = symbol.textValue == null
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = textColor
+            textSize = if (isPreview) 10f else 14f
+            typeface = tf
+            textAlign = if (isPreview) Paint.Align.CENTER else align
+        }
+
+        val lines = rawText.split("\n")
+        val fontSpacing = paint.fontSpacing
+        val startY = if (lines.size > 1) -(lines.size - 1) * fontSpacing / 2f + 4f else 4f
+
+        for ((idx, line) in lines.withIndex()) {
+            canvas.drawText(line, 0f, startY + (idx * fontSpacing), paint)
+        }
+    }
+
     private fun drawCustomSymbol(canvas: Canvas, symbol: ScoreSymbol) {
         val path = symbol.imagePath
         if (!path.isNullOrBlank()) {
             val file = java.io.File(path)
             if (file.exists()) {
-                val halfSize = 14f
-                val rect = RectF(-halfSize, -halfSize, halfSize, halfSize)
                 val bmp = com.example.util.CustomSymbolImageHelper.loadBitmap(file, 256)
                 if (bmp != null) {
-                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
-                    canvas.drawBitmap(bmp, null, rect, paint)
+                    val bmpW = bmp.width.toFloat()
+                    val bmpH = bmp.height.toFloat()
+                    val maxHalf = 14f
+                    val halfW: Float
+                    val halfH: Float
+                    if (bmpW > bmpH && bmpH > 0f) {
+                        halfW = maxHalf
+                        halfH = maxHalf * (bmpH / bmpW)
+                    } else if (bmpH > 0f && bmpW > 0f) {
+                        halfH = maxHalf
+                        halfW = maxHalf * (bmpW / bmpH)
+                    } else {
+                        halfW = maxHalf
+                        halfH = maxHalf
+                    }
+                    val rect = RectF(-halfW, -halfH, halfW, halfH)
+                    canvas.drawBitmap(bmp, null, rect, customBitmapPaint)
                     return
                 }
             }

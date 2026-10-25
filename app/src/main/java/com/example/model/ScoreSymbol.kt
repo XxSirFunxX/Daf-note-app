@@ -24,6 +24,14 @@ data class ScoreSymbol(
      */
     fun getVisualBounds(baseSpacing: Float): Pair<Float, Float> {
         val s = scale * (baseSpacing / 14f)
+        if (type == SymbolType.TEXT_ANNOTATION) {
+            val text = textValue ?: name
+            val lines = text.split("\n")
+            val maxLen = lines.maxOfOrNull { it.length } ?: 4
+            val hw = ((maxLen * 4.5f + 10f) * s).coerceIn(20f * s, 300f * s)
+            val hh = ((lines.size * 11f + 6f) * s).coerceIn(12f * s, 200f * s)
+            return hw to hh
+        }
         return when (category) {
             SymbolCategory.BAR_LINES -> (10f * s) to (baseSpacing * 3.8f)
             SymbolCategory.TIME_SIGNATURES -> (22f * s) to (baseSpacing * 2.8f)
