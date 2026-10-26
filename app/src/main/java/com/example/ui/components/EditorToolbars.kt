@@ -212,16 +212,16 @@ fun EditorTopBar(
                         modifier = Modifier.testTag("menu_custom_symbols")
                     )
                     DropdownMenuItem(
-                        text = { Text("راهنمای جامع نرم‌افزار") },
-                        leadingIcon = { Icon(Icons.Default.HelpOutline, contentDescription = null) },
-                        onClick = { menuExpanded = false; onOpenHelp() },
-                        modifier = Modifier.testTag("menu_help")
-                    )
-                    DropdownMenuItem(
                         text = { Text("متن راهنمای خطوط حامل") },
                         leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
                         onClick = { menuExpanded = false; onOpenStaffGuideSettings() },
                         modifier = Modifier.testTag("menu_staff_guide_settings")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("راهنمای جامع نرم‌افزار") },
+                        leadingIcon = { Icon(Icons.Default.HelpOutline, contentDescription = null) },
+                        onClick = { menuExpanded = false; onOpenHelp() },
+                        modifier = Modifier.testTag("menu_help")
                     )
                 }
             }

@@ -93,6 +93,8 @@ object ScoreRenderer {
         showGuides: Boolean = true,
         highlightLine4: Boolean = true,
         line4GuideText: String = "۴ (حلقه‌ها)",
+        line3GuideText: String = "۳ (بَک)",
+        line2GuideText: String = "۲ (میانه)",
         line1GuideText: String = "۱ (تُم)"
     ) {
         val width = page.paperSize.widthPt
@@ -121,7 +123,7 @@ object ScoreRenderer {
         // 3. Staves
         val staves = page.generateStaves()
         for (staff in staves) {
-            drawStaffSystem(canvas, staff, highlightLine4, showGuides, line4GuideText, line1GuideText)
+            drawStaffSystem(canvas, staff, highlightLine4, showGuides, line4GuideText, line3GuideText, line2GuideText, line1GuideText)
         }
 
         // 4. Symbols
@@ -154,6 +156,8 @@ object ScoreRenderer {
         highlightLine4: Boolean,
         showGuides: Boolean,
         line4GuideText: String = "۴ (حلقه‌ها)",
+        line3GuideText: String = "۳ (بَک)",
+        line2GuideText: String = "۲ (میانه)",
         line1GuideText: String = "۱ (تُم)"
     ) {
         // Line 1 (Bottom line - Bass / Tom)
@@ -185,6 +189,12 @@ object ScoreRenderer {
             }
             if (line4GuideText.isNotBlank()) {
                 canvas.drawText(line4GuideText, staff.left - 8f, staff.line4Y + 3f, guidePaint)
+            }
+            if (line3GuideText.isNotBlank()) {
+                canvas.drawText(line3GuideText, staff.left - 8f, staff.line3Y + 3f, guidePaint)
+            }
+            if (line2GuideText.isNotBlank()) {
+                canvas.drawText(line2GuideText, staff.left - 8f, staff.line2Y + 3f, guidePaint)
             }
             if (line1GuideText.isNotBlank()) {
                 canvas.drawText(line1GuideText, staff.left - 8f, staff.line1Y + 3f, guidePaint)

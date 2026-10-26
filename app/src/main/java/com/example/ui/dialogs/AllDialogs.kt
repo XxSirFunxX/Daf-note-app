@@ -2127,39 +2127,73 @@ fun CategoryManagerDialog(
 }
 
 // ==========================================
-// 8. NOTE DEFINITIONS MANAGER DIALOG
+// 8. NOTE DEFINITIONS & VISIBILITY MANAGER DIALOG
 // ==========================================
+
+sealed class ManageableNotationItem {
+    abstract val id: String
+    abstract val name: String
+    abstract val categoryId: String
+    abstract val durationValue: String?
+    abstract val isRingSound: Boolean
+    abstract val isDefault: Boolean
+    abstract val isHidden: Boolean
+    abstract val imagePath: String?
+
+    data class NoteDef(val entity: NoteDefinitionEntity) : ManageableNotationItem() {
+        override val id: String get() = entity.id
+        override val name: String get() = entity.name
+        override val categoryId: String get() = entity.categoryId
+        override val durationValue: String? get() = entity.durationValue
+        override val isRingSound: Boolean get() = entity.isRingSound
+        override val isDefault: Boolean get() = entity.isDefault
+        override val isHidden: Boolean get() = entity.isHidden
+        override val imagePath: String? get() = entity.imagePath
+    }
+
+    data class CustomSym(val entity: CustomSymbolEntity) : ManageableNotationItem() {
+        override val id: String get() = entity.id
+        override val name: String get() = entity.name
+        override val categoryId: String get() = entity.categoryId
+        override val durationValue: String? get() = entity.durationValue
+        override val isRingSound: Boolean get() = entity.isRingSound
+        override val isDefault: Boolean get() = false
+        override val isHidden: Boolean get() = entity.isHidden
+        override val imagePath: String? get() = entity.imagePath
+    }
+}
 
 @Composable
 fun NoteDefinitionsManagerDialog(
     noteDefinitions: List<NoteDefinitionEntity>,
+    customSymbols: List<CustomSymbolEntity> = emptyList(),
     categories: List<CategoryEntity>,
     onDismiss: () -> Unit,
     onToggleHidden: (String, Boolean) -> Unit,
+    onToggleHiddenCustomSymbol: (String, Boolean) -> Unit = { _, _ -> },
     onAddNoteDefinition: (String, SymbolType, String, String, Boolean) -> Unit = { _, _, _, _, _ -> },
     onUpdateNoteDefinition: (NoteDefinitionEntity) -> Unit = {},
-    onDeleteNoteDefinition: (String) -> Unit = {}
+    onDeleteNoteDefinition: (String) -> Unit = {},
+    onDeleteCustomSymbol: (String) -> Unit = {},
+    onUpdateCustomSymbol: (CustomSymbolEntity) -> Unit = {}
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: List & Manage, 1: Add New Definition
+    val allItems = remember(noteDefinitions, customSymbols) {
+        val noteItems = noteDefinitions.map { ManageableNotationItem.NoteDef(it) }
+        val customItems = customSymbols.map { ManageableNotationItem.CustomSym(it) }
+        noteItems + customItems
+    }
 
-    // New Definition State
-    var newDefName by remember { mutableStateOf("") }
-    var selectedSymbolType by remember { mutableStateOf(SymbolType.NOTE_QUARTER) }
-    var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull { it.id == "NOTES" }?.id ?: "NOTES") }
-    var durationValue by remember { mutableStateOf("1/4") }
-    var isRingSound by remember { mutableStateOf(false) }
-
-    // Edit Definition State
-    var editingDef by remember { mutableStateOf<NoteDefinitionEntity?>(null) }
+    // Edit State
+    var editingItem by remember { mutableStateOf<ManageableNotationItem?>(null) }
     var editName by remember { mutableStateOf("") }
     var editCategoryId by remember { mutableStateOf("") }
     var editDuration by remember { mutableStateOf("1/4") }
     var editIsRingSound by remember { mutableStateOf(false) }
 
     // Delete confirmation state
-    var defToDelete by remember { mutableStateOf<NoteDefinitionEntity?>(null) }
+    var itemToDelete by remember { mutableStateOf<ManageableNotationItem?>(null) }
 
-    val commonDurations = listOf("1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64")
+    val commonDurations = listOf("پیش‌فرض", "1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2168,20 +2202,7 @@ fun NoteDefinitionsManagerDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.MusicNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("مدیریت و تعریف نت‌ها و نشانه‌ها", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                TabRow(selectedTabIndex = selectedTab) {
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        text = { Text("فهرست و پنهان‌سازی (${noteDefinitions.size})", fontSize = 11.sp) }
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        text = { Text("تعریف نت جدید", fontSize = 11.sp) }
-                    )
+                    Text("مدیریت و پنهان‌سازی نت‌ها و نشانه‌ها (${allItems.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
         },
@@ -2191,177 +2212,103 @@ fun NoteDefinitionsManagerDialog(
                     .fillMaxWidth()
                     .height(380.dp)
             ) {
-                if (selectedTab == 0) {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Text(
-                            text = "با کلید سوئیچ می‌توانید نت‌ها یا نشانه‌ها را از پالت ابزار موقتاً مخفی کنید:",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        text = "با کلید سوئیچ می‌توانید نمادها را از پالت ابزار موقتاً مخفی کنید. برای تعریف نماد جدید، از بخش «کتابخانه نمادهای سفارشی» استفاده کنید:",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(noteDefinitions) { noteDef ->
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(noteDef.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                                if (noteDef.isDefault) {
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("(اصلی)", fontSize = 10.sp, color = Color.Gray)
-                                                }
-                                            }
-                                            val catTitle = categories.firstOrNull { it.id == noteDef.categoryId }?.titleFa ?: noteDef.categoryId
-                                            Text("دسته: $catTitle | کشش: ${noteDef.durationValue}", fontSize = 11.sp, color = Color.Gray)
-                                        }
-
-                                        // Edit button
-                                        IconButton(
-                                            onClick = {
-                                                editingDef = noteDef
-                                                editName = noteDef.name
-                                                editCategoryId = noteDef.categoryId
-                                                editDuration = noteDef.durationValue
-                                                editIsRingSound = noteDef.isRingSound
-                                            },
-                                            modifier = Modifier.size(30.dp)
-                                        ) {
-                                            Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        }
-
-                                        // Delete button (for all definitions including defaults)
-                                        IconButton(
-                                            onClick = { defToDelete = noteDef },
-                                            modifier = Modifier.size(30.dp)
-                                        ) {
-                                            Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                        }
-
-                                        Spacer(modifier = Modifier.width(4.dp))
-
-                                        Switch(
-                                            checked = !noteDef.isHidden,
-                                            onCheckedChange = { isVisible ->
-                                                onToggleHidden(noteDef.id, !isVisible)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // TAB 1: ADD NEW NOTE DEFINITION
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        OutlinedTextField(
-                            value = newDefName,
-                            onValueChange = { newDefName = it },
-                            label = { Text("عنوان تعریف نت") },
-                            placeholder = { Text("مثلاً: نت دولاچنگ سرعتی") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        items(allItems, key = { it.id }) { item ->
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Thumbnail / icon
+                                    val imgPath = item.imagePath
+                                    val fileExists = imgPath?.let { File(it).exists() } == true
+                                    val bmp = remember(imgPath) {
+                                        if (fileExists && imgPath != null) {
+                                            com.example.util.CustomSymbolImageHelper.loadBitmap(File(imgPath), 64)
+                                        } else null
+                                    }
 
-                        Text("دسته‌بندی نت:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            categories.forEach { cat ->
-                                val isSel = cat.id == selectedCategoryId
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = { selectedCategoryId = cat.id },
-                                    label = { Text(cat.titleFa, fontSize = 11.sp) }
-                                )
-                            }
-                        }
+                                    if (bmp != null) {
+                                        Image(
+                                            bitmap = bmp.asImageBitmap(),
+                                            contentDescription = item.name,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(Color.White)
+                                                .border(1.dp, Color(0xFFD6D0C5), RoundedCornerShape(4.dp))
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
 
-                        Text("میزان کشش (Duration):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            commonDurations.forEach { dur ->
-                                val isSel = dur == durationValue
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = { durationValue = dur },
-                                    label = { Text(dur, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-                                )
-                            }
-                        }
-
-                        Text("نماد پایه در نت‌نگاری:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            val candidateTypes = listOf(
-                                SymbolType.NOTE_WHOLE,
-                                SymbolType.NOTE_HALF,
-                                SymbolType.NOTE_QUARTER,
-                                SymbolType.NOTE_EIGHTH,
-                                SymbolType.NOTE_SIXTEENTH,
-                                SymbolType.NOTE_THIRTYSECOND,
-                                SymbolType.REST_QUARTER,
-                                SymbolType.RING_SINGLE,
-                                SymbolType.RING_TREMOLO
-                            )
-                            candidateTypes.forEach { st ->
-                                val isSel = st == selectedSymbolType
-                                FilterChip(
-                                    selected = isSel,
-                                    onClick = {
-                                        selectedSymbolType = st
-                                        if (st.isRingSound || st.defaultCategory.name == "RING_SOUNDS") {
-                                            isRingSound = true
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(item.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            if (item is ManageableNotationItem.CustomSym) {
+                                                Text("(سفارشی)", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                            } else if (item.isDefault) {
+                                                Text("(اصلی)", fontSize = 10.sp, color = Color.Gray)
+                                            }
                                         }
-                                    },
-                                    label = { Text(st.defaultTitleFa, fontSize = 10.sp) }
-                                )
-                            }
-                        }
+                                        val catTitle = categories.firstOrNull { it.id == item.categoryId || it.titleFa == item.categoryId }?.titleFa ?: item.categoryId
+                                        val durText = if (item.durationValue != null) " | کشش: ${item.durationValue}" else ""
+                                        val ringText = if (item.isRingSound) " • خط ۴" else ""
+                                        Text("دسته: $catTitle$durText$ringText", fontSize = 11.sp, color = Color.Gray)
+                                    }
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isRingSound) Color(0xFFFFEBE6) else Color(0xFFF2EFE8))
-                                .clickable { isRingSound = !isRingSound }
-                                .padding(8.dp)
-                        ) {
-                            Checkbox(checked = isRingSound, onCheckedChange = { isRingSound = it })
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column {
-                                Text("تعلق به صدای حلقه‌ها (قانون خط چهارم)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                Text("محدودیت استقرار منحصراً روی خط چهارم حامل چهارخطی", fontSize = 10.sp, color = Color.Gray)
+                                    // Edit button
+                                    IconButton(
+                                        onClick = {
+                                            editingItem = item
+                                            editName = item.name
+                                            editCategoryId = item.categoryId
+                                            editDuration = item.durationValue ?: "پیش‌فرض"
+                                            editIsRingSound = item.isRingSound
+                                        },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "ویرایش", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    }
+
+                                    // Delete button
+                                    IconButton(
+                                        onClick = { itemToDelete = item },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "حذف", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                    }
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+
+                                    Switch(
+                                        checked = !item.isHidden,
+                                        onCheckedChange = { isVisible ->
+                                            when (item) {
+                                                is ManageableNotationItem.NoteDef -> onToggleHidden(item.id, !isVisible)
+                                                is ManageableNotationItem.CustomSym -> onToggleHiddenCustomSymbol(item.id, !isVisible)
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -2369,46 +2316,16 @@ fun NoteDefinitionsManagerDialog(
             }
         },
         confirmButton = {
-            if (selectedTab == 1) {
-                Button(
-                    onClick = {
-                        if (newDefName.isNotBlank()) {
-                            onAddNoteDefinition(
-                                newDefName.trim(),
-                                selectedSymbolType,
-                                selectedCategoryId,
-                                durationValue,
-                                isRingSound
-                            )
-                            newDefName = ""
-                            selectedTab = 0
-                        }
-                    },
-                    enabled = newDefName.isNotBlank()
-                ) {
-                    Text("افزودن تعریف نت")
-                }
-            } else {
-                TextButton(onClick = onDismiss) { Text("بستن") }
-            }
-        },
-        dismissButton = if (selectedTab == 1) {
-            {
-                TextButton(onClick = {
-                    newDefName = ""
-                    selectedTab = 0
-                }) { Text("انصراف") }
-            }
-        } else null
+            TextButton(onClick = onDismiss) { Text("بستن") }
+        }
     )
 
-
     // Edit Sub-dialog
-    if (editingDef != null) {
-        val def = editingDef!!
+    if (editingItem != null) {
+        val item = editingItem!!
         AlertDialog(
-            onDismissRequest = { editingDef = null },
-            title = { Text("ویرایش تعریف نت", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { editingItem = null },
+            title = { Text(if (item is ManageableNotationItem.CustomSym) "ویرایش نماد سفارشی" else "ویرایش تعریف نماد", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -2430,7 +2347,7 @@ fun NoteDefinitionsManagerDialog(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         categories.forEach { cat ->
-                            val isSel = cat.id == editCategoryId
+                            val isSel = cat.id == editCategoryId || cat.titleFa == editCategoryId
                             FilterChip(
                                 selected = isSel,
                                 onClick = { editCategoryId = cat.id },
@@ -2475,15 +2392,30 @@ fun NoteDefinitionsManagerDialog(
                 Button(
                     onClick = {
                         if (editName.isNotBlank()) {
-                            onUpdateNoteDefinition(
-                                def.copy(
-                                    name = editName.trim(),
-                                    categoryId = editCategoryId,
-                                    durationValue = editDuration,
-                                    isRingSound = editIsRingSound
-                                )
-                            )
-                            editingDef = null
+                            val finalDur = if (editDuration == "پیش‌فرض") null else editDuration
+                            when (item) {
+                                is ManageableNotationItem.NoteDef -> {
+                                    onUpdateNoteDefinition(
+                                        item.entity.copy(
+                                            name = editName.trim(),
+                                            categoryId = editCategoryId,
+                                            durationValue = finalDur ?: "1/4",
+                                            isRingSound = editIsRingSound
+                                        )
+                                    )
+                                }
+                                is ManageableNotationItem.CustomSym -> {
+                                    onUpdateCustomSymbol(
+                                        item.entity.copy(
+                                            name = editName.trim(),
+                                            categoryId = editCategoryId,
+                                            durationValue = finalDur,
+                                            isRingSound = editIsRingSound
+                                        )
+                                    )
+                                }
+                            }
+                            editingItem = null
                         }
                     },
                     enabled = editName.isNotBlank()
@@ -2492,28 +2424,28 @@ fun NoteDefinitionsManagerDialog(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingDef = null }) { Text("انصراف") }
+                TextButton(onClick = { editingItem = null }) { Text("انصراف") }
             }
         )
     }
 
     // Delete confirmation
-    if (defToDelete != null) {
-        val def = defToDelete!!
+    if (itemToDelete != null) {
+        val item = itemToDelete!!
         AlertDialog(
-            onDismissRequest = { defToDelete = null },
+            onDismissRequest = { itemToDelete = null },
             title = {
                 Text(
-                    text = if (def.isDefault) "حذف تعریف اصلی نت" else "حذف تعریف نت",
+                    text = if (item.isDefault) "حذف تعریف اصلی نماد" else "حذف نماد",
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Text(
-                    text = if (def.isDefault) {
-                        "آیا از حذف تعریف اصلی '${def.name}' اطمینان دارید؟\nاین نت از کتابخانه و پالت نمادها حذف خواهد شد، اما نمادهایی که پیش‌تر در صفحات قطعه قرار گرفته‌اند به طور کامل حفظ می‌شوند."
+                    text = if (item.isDefault) {
+                        "آیا از حذف تعریف اصلی '${item.name}' اطمینان دارید؟\nاین نماد از کتابخانه و پالت نمادها حذف خواهد شد، اما نمادهایی که پیش‌تر در صفحات قطعه قرار گرفته‌اند به طور کامل حفظ می‌شوند."
                     } else {
-                        "آیا از حذف تعریف '${def.name}' اطمینان دارید؟"
+                        "آیا از حذف '${item.name}' اطمینان دارید؟"
                     },
                     fontSize = 13.sp
                 )
@@ -2521,8 +2453,11 @@ fun NoteDefinitionsManagerDialog(
             confirmButton = {
                 Button(
                     onClick = {
-                        onDeleteNoteDefinition(def.id)
-                        defToDelete = null
+                        when (item) {
+                            is ManageableNotationItem.NoteDef -> onDeleteNoteDefinition(item.id)
+                            is ManageableNotationItem.CustomSym -> onDeleteCustomSymbol(item.id)
+                        }
+                        itemToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
@@ -2530,7 +2465,7 @@ fun NoteDefinitionsManagerDialog(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { defToDelete = null }) { Text("انصراف") }
+                TextButton(onClick = { itemToDelete = null }) { Text("انصراف") }
             }
         )
     }
@@ -2543,12 +2478,16 @@ fun NoteDefinitionsManagerDialog(
 @Composable
 fun StaffGuideSettingsDialog(
     currentLine4Text: String,
+    currentLine3Text: String = "۳ (بَک)",
+    currentLine2Text: String = "۲ (میانه)",
     currentLine1Text: String,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
+    onSave: (String, String, String, String) -> Unit,
     onResetToDefault: () -> Unit
 ) {
     var line4 by remember { mutableStateOf(currentLine4Text) }
+    var line3 by remember { mutableStateOf(currentLine3Text) }
+    var line2 by remember { mutableStateOf(currentLine2Text) }
     var line1 by remember { mutableStateOf(currentLine1Text) }
 
     AlertDialog(
@@ -2561,9 +2500,13 @@ fun StaffGuideSettingsDialog(
             }
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
-                    text = "متن نمایش‌داده‌شده در کنار خطوط ۴ (بالا) و ۱ (پایین) حامل را سفارشی‌سازی کنید:",
+                    text = "متن نمایش‌داده‌شده در کنار ۴ خط حامل دف را سفارشی‌سازی کنید:",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -2575,6 +2518,26 @@ fun StaffGuideSettingsDialog(
                     label = { Text("متن راهنمای خط ۴ (پیش‌فرض: ۴ (حلقه‌ها))") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("input_guide_line4")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = line3,
+                    onValueChange = { line3 = it },
+                    label = { Text("متن راهنمای خط ۳ (پیش‌فرض: ۳ (بَک))") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("input_guide_line3")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = line2,
+                    onValueChange = { line2 = it },
+                    label = { Text("متن راهنمای خط ۲ (پیش‌فرض: ۲ (میانه))") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("input_guide_line2")
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2592,6 +2555,8 @@ fun StaffGuideSettingsDialog(
                 TextButton(
                     onClick = {
                         line4 = "۴ (حلقه‌ها)"
+                        line3 = "۳ (بَک)"
+                        line2 = "۲ (میانه)"
                         line1 = "۱ (تُم)"
                         onResetToDefault()
                     },
@@ -2606,7 +2571,7 @@ fun StaffGuideSettingsDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onSave(line4.trim(), line1.trim())
+                    onSave(line4.trim(), line3.trim(), line2.trim(), line1.trim())
                     onDismiss()
                 },
                 modifier = Modifier.testTag("btn_save_guide_text")

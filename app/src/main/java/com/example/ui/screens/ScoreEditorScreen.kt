@@ -160,6 +160,8 @@ fun ScoreEditorScreen(
                 showGuides = state.showGuides,
                 highlightLine4 = state.highlightLine4,
                 line4GuideText = state.line4GuideText,
+                line3GuideText = state.line3GuideText,
+                line2GuideText = state.line2GuideText,
                 line1GuideText = state.line1GuideText,
                 zoomScale = state.zoomScale,
                 panOffsetX = state.panOffsetX,
@@ -296,19 +298,26 @@ fun ScoreEditorScreen(
     if (showNoteManagerDialog) {
         NoteDefinitionsManagerDialog(
             noteDefinitions = state.noteDefinitionsList,
+            customSymbols = state.customSymbolsList,
             categories = state.categoriesList,
             onDismiss = { showNoteManagerDialog = false },
             onToggleHidden = { id, hidden ->
                 viewModel.toggleNoteDefinitionHidden(id, hidden)
             },
-            onAddNoteDefinition = { name, type, catId, dur, isRing ->
-                viewModel.addNoteDefinition(name, type, catId, dur, isRing)
+            onToggleHiddenCustomSymbol = { id, hidden ->
+                viewModel.toggleCustomSymbolHidden(id, hidden)
             },
             onUpdateNoteDefinition = { def ->
                 viewModel.updateNoteDefinition(def)
             },
+            onUpdateCustomSymbol = { sym ->
+                viewModel.updateCustomSymbol(sym)
+            },
             onDeleteNoteDefinition = { id ->
                 viewModel.deleteNoteDefinition(id)
+            },
+            onDeleteCustomSymbol = { id ->
+                viewModel.removeCustomSymbol(id, context)
             }
         )
     }
@@ -362,10 +371,12 @@ fun ScoreEditorScreen(
     if (showStaffGuideDialog) {
         StaffGuideSettingsDialog(
             currentLine4Text = state.line4GuideText,
+            currentLine3Text = state.line3GuideText,
+            currentLine2Text = state.line2GuideText,
             currentLine1Text = state.line1GuideText,
             onDismiss = { showStaffGuideDialog = false },
-            onSave = { l4, l1 ->
-                viewModel.updateStaffGuides(l4, l1)
+            onSave = { l4, l3, l2, l1 ->
+                viewModel.updateStaffGuides(l4, l3, l2, l1)
             },
             onResetToDefault = {
                 viewModel.resetStaffGuides()

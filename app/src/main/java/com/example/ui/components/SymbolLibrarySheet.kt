@@ -235,12 +235,10 @@ fun SymbolLibrarySheet(
                     }
                 }
 
-                // 2. Custom Symbols matching current category (or when in CUSTOM), excluding hidden ones
-                val filteredCustom = (if (activeCategoryId == "CUSTOM") {
-                    customSymbols
-                } else {
-                    customSymbols.filter { it.categoryId == activeCategoryId || it.categoryId == activeCategoryTitle }
-                }).filter { !it.isHidden }
+                // 2. Custom Symbols matching current category, excluding hidden ones
+                val filteredCustom = customSymbols.filter {
+                    (it.categoryId == activeCategoryId || it.categoryId == activeCategoryTitle) && !it.isHidden
+                }
 
 
                 items(filteredCustom) { customSym ->

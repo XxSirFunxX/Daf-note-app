@@ -46,6 +46,8 @@ fun ScoreCanvasView(
     showGuides: Boolean,
     highlightLine4: Boolean,
     line4GuideText: String = "۴ (حلقه‌ها)",
+    line3GuideText: String = "۳ (بَک)",
+    line2GuideText: String = "۲ (میانه)",
     line1GuideText: String = "۱ (تُم)",
     zoomScale: Float,
     panOffsetX: Float,
@@ -301,6 +303,8 @@ fun ScoreCanvasView(
                             showGuides = showGuides,
                             highlightLine4 = highlightLine4,
                             line4GuideText = line4GuideText,
+                            line3GuideText = line3GuideText,
+                            line2GuideText = line2GuideText,
                             line1GuideText = line1GuideText
                         )
 

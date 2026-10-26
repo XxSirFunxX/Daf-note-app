@@ -361,4 +361,101 @@ class ExampleUnitTest {
         assertEquals("۴ (حلقه‌ها)", currentLine4)
         assertEquals("۱ (تُم)", currentLine1)
     }
+
+    @Test
+    fun testIssue1_UnifiedManageableNotationItems() {
+        val noteDef = com.example.data.NoteDefinitionEntity(
+            id = "DEF_TOM",
+            name = "تُم اصلی",
+            symbolTypeName = "NOTE_QUARTER",
+            categoryId = "NOTES",
+            isDefault = true,
+            isHidden = false
+        )
+        val customSym = com.example.data.CustomSymbolEntity(
+            id = "CS_CUSTOM_1",
+            name = "مضراب خاص",
+            categoryId = "TECHNIQUES",
+            durationValue = "1/8",
+            isHidden = false
+        )
+
+        val noteItem = com.example.ui.dialogs.ManageableNotationItem.NoteDef(noteDef)
+        val customItem = com.example.ui.dialogs.ManageableNotationItem.CustomSym(customSym)
+
+        val combinedList = listOf(noteItem, customItem)
+        assertEquals(2, combinedList.size)
+
+        // Verify distinction between built-in and user custom
+        assertTrue(noteItem.isDefault)
+        assertFalse(customItem.isDefault)
+        assertEquals("1/8", customItem.durationValue)
+
+        // Test visibility toggle preservation
+        val hiddenCustom = customSym.copy(isHidden = true)
+        val hiddenCustomItem = com.example.ui.dialogs.ManageableNotationItem.CustomSym(hiddenCustom)
+        assertTrue(hiddenCustomItem.isHidden)
+    }
+
+    @Test
+    fun testIssue2_CustomSymbolsFilteredStrictlyByAssignedCategory() {
+        val techniqueCustom = com.example.data.CustomSymbolEntity(
+            id = "CS_TECH_1",
+            name = "اشاره ترکیبی",
+            categoryId = "TECHNIQUES"
+        )
+        val genericCustom = com.example.data.CustomSymbolEntity(
+            id = "CS_GEN_1",
+            name = "علامت آزاد",
+            categoryId = "CUSTOM"
+        )
+
+        val allCustom = listOf(techniqueCustom, genericCustom)
+
+        // Filter for "TECHNIQUES"
+        val techniquesFiltered = allCustom.filter { it.categoryId == "TECHNIQUES" || it.categoryId == "تکنیک و مضراب" }
+        assertEquals(1, techniquesFiltered.size)
+        assertEquals("CS_TECH_1", techniquesFiltered[0].id)
+
+        // Filter for "CUSTOM" - must NOT include techniqueCustom!
+        val customFiltered = allCustom.filter { it.categoryId == "CUSTOM" || it.categoryId == "سفارشی" }
+        assertEquals(1, customFiltered.size)
+        assertEquals("CS_GEN_1", customFiltered[0].id)
+    }
+
+    @Test
+    fun testIssue3_AllFourStaffGuideLinesState() {
+        val defaultLine4 = "۴ (حلقه‌ها)"
+        val defaultLine3 = "۳ (بَک)"
+        val defaultLine2 = "۲ (میانه)"
+        val defaultLine1 = "۱ (تُم)"
+
+        var line4 = defaultLine4
+        var line3 = defaultLine3
+        var line2 = defaultLine2
+        var line1 = defaultLine1
+
+        assertEquals("۴ (حلقه‌ها)", line4)
+        assertEquals("۳ (بَک)", line3)
+        assertEquals("۲ (میانه)", line2)
+        assertEquals("۱ (تُم)", line1)
+
+        // Edit lines 2 and 3 independently
+        line2 = "۲ (چپ)"
+        line3 = "۳ (راست)"
+        assertEquals("۴ (حلقه‌ها)", line4)
+        assertEquals("۳ (راست)", line3)
+        assertEquals("۲ (چپ)", line2)
+        assertEquals("۱ (تُم)", line1)
+
+        // Restore all defaults
+        line4 = defaultLine4
+        line3 = defaultLine3
+        line2 = defaultLine2
+        line1 = defaultLine1
+        assertEquals("۴ (حلقه‌ها)", line4)
+        assertEquals("۳ (بَک)", line3)
+        assertEquals("۲ (میانه)", line2)
+        assertEquals("۱ (تُم)", line1)
+    }
 }

@@ -73,6 +73,8 @@ data class EditorUiState(
     val showReferenceBackdrop: Boolean = false,
     val isSaving: Boolean = false,
     val line4GuideText: String = "۴ (حلقه‌ها)",
+    val line3GuideText: String = "۳ (بَک)",
+    val line2GuideText: String = "۲ (میانه)",
     val line1GuideText: String = "۱ (تُم)",
     val helpTopicsList: List<HelpTopicEntity> = emptyList()
 )
@@ -92,8 +94,17 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
         val prefs = application.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
         val savedLine4 = prefs.getString("staff_guide_line4", "۴ (حلقه‌ها)") ?: "۴ (حلقه‌ها)"
+        val savedLine3 = prefs.getString("staff_guide_line3", "۳ (بَک)") ?: "۳ (بَک)"
+        val savedLine2 = prefs.getString("staff_guide_line2", "۲ (میانه)") ?: "۲ (میانه)"
         val savedLine1 = prefs.getString("staff_guide_line1", "۱ (تُم)") ?: "۱ (تُم)"
-        _uiState.update { it.copy(line4GuideText = savedLine4, line1GuideText = savedLine1) }
+        _uiState.update {
+            it.copy(
+                line4GuideText = savedLine4,
+                line3GuideText = savedLine3,
+                line2GuideText = savedLine2,
+                line1GuideText = savedLine1
+            )
+        }
 
         viewModelScope.launch {
             repository.ensureDefaultCategories()
@@ -253,15 +264,13 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectPaletteSymbol(type: SymbolType) {
         _uiState.update { current ->
-            if (current.activePaletteSymbol == type) {
+            if (current.activePaletteSymbol == type && current.activeCustomSymbol == null) {
                 // Tapping active symbol again cancels the selection
                 current.copy(activePaletteSymbol = null, activeCustomSymbol = null)
             } else {
                 current.copy(
                     activePaletteSymbol = type,
-                    activeCustomSymbol = null,
-                    activePaletteCategory = type.defaultCategory,
-                    activePaletteCategoryId = type.defaultCategory.name
+                    activeCustomSymbol = null
                 )
             }
         }
@@ -275,8 +284,7 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 current.copy(
                     activeCustomSymbol = custom,
-                    activePaletteSymbol = null,
-                    activePaletteCategoryId = custom.categoryId
+                    activePaletteSymbol = null
                 )
             }
         }
@@ -840,13 +848,22 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- STAFF GUIDE TEXT CUSTOMIZATION ---
 
-    fun updateStaffGuides(line4: String, line1: String) {
+    fun updateStaffGuides(line4: String, line3: String, line2: String, line1: String) {
         val prefs = getApplication<Application>().getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .putString("staff_guide_line4", line4.trim())
+            .putString("staff_guide_line3", line3.trim())
+            .putString("staff_guide_line2", line2.trim())
             .putString("staff_guide_line1", line1.trim())
             .apply()
-        _uiState.update { it.copy(line4GuideText = line4.trim(), line1GuideText = line1.trim()) }
+        _uiState.update {
+            it.copy(
+                line4GuideText = line4.trim(),
+                line3GuideText = line3.trim(),
+                line2GuideText = line2.trim(),
+                line1GuideText = line1.trim()
+            )
+        }
         showNotification("متن راهنمای خطوط حامل به‌روزرسانی شد")
     }
 
@@ -854,9 +871,18 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = getApplication<Application>().getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
         prefs.edit()
             .remove("staff_guide_line4")
+            .remove("staff_guide_line3")
+            .remove("staff_guide_line2")
             .remove("staff_guide_line1")
             .apply()
-        _uiState.update { it.copy(line4GuideText = "۴ (حلقه‌ها)", line1GuideText = "۱ (تُم)") }
+        _uiState.update {
+            it.copy(
+                line4GuideText = "۴ (حلقه‌ها)",
+                line3GuideText = "۳ (بَک)",
+                line2GuideText = "۲ (میانه)",
+                line1GuideText = "۱ (تُم)"
+            )
+        }
         showNotification("متن راهنمای خطوط حامل به پیش‌فرض بازگردانده شد")
     }
 
