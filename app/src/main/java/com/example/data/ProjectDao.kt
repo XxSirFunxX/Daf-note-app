@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -78,6 +79,9 @@ interface ProjectDao {
     @Query("UPDATE note_definitions SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun reassignCategoryNotes(oldCategoryId: String, newCategoryId: String)
 
+    @Query("UPDATE note_definitions SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId OR categoryId = :oldCategoryTitle")
+    suspend fun reassignCategoryNotesFlexible(oldCategoryId: String, oldCategoryTitle: String, newCategoryId: String)
+
     // --- CUSTOM SYMBOLS ---
     @Query("SELECT * FROM custom_symbols WHERE isHidden = 0 ORDER BY createdAt DESC")
     fun getAllActiveCustomSymbols(): Flow<List<CustomSymbolEntity>>
@@ -99,6 +103,16 @@ interface ProjectDao {
 
     @Query("UPDATE custom_symbols SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
     suspend fun reassignCategoryCustomSymbols(oldCategoryId: String, newCategoryId: String)
+
+    @Query("UPDATE custom_symbols SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId OR categoryId = :oldCategoryTitle")
+    suspend fun reassignCategoryCustomSymbolsFlexible(oldCategoryId: String, oldCategoryTitle: String, newCategoryId: String)
+
+    @Transaction
+    suspend fun deleteCategoryAndReassign(oldCategoryId: String, oldCategoryTitle: String, newCategoryId: String) {
+        reassignCategoryNotesFlexible(oldCategoryId, oldCategoryTitle, newCategoryId)
+        reassignCategoryCustomSymbolsFlexible(oldCategoryId, oldCategoryTitle, newCategoryId)
+        deleteCategory(oldCategoryId)
+    }
 
     // --- HELP TOPICS ---
     @Query("SELECT * FROM help_topics ORDER BY orderIndex ASC")

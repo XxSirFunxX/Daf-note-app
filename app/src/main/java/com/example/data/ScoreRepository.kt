@@ -99,14 +99,14 @@ class ScoreRepository(
         val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE) ?: return
         val currentSet = prefs.getStringSet("deleted_default_cats", emptySet())?.toMutableSet() ?: mutableSetOf()
         currentSet.add(categoryId)
-        prefs.edit().putStringSet("deleted_default_cats", currentSet).apply()
+        prefs.edit().putStringSet("deleted_default_cats", currentSet).commit()
     }
 
     private fun markNoteDefDeleted(noteId: String) {
         val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE) ?: return
         val currentSet = prefs.getStringSet("deleted_default_notes", emptySet())?.toMutableSet() ?: mutableSetOf()
         currentSet.add(noteId)
-        prefs.edit().putStringSet("deleted_default_notes", currentSet).apply()
+        prefs.edit().putStringSet("deleted_default_notes", currentSet).commit()
     }
 
     suspend fun ensureDefaultCategories() {
@@ -130,7 +130,7 @@ class ScoreRepository(
             if (defaults.isNotEmpty()) {
                 dao.insertCategories(defaults)
             }
-            prefs?.edit()?.putBoolean("has_seeded_default_cats", true)?.apply()
+            prefs?.edit()?.putBoolean("has_seeded_default_cats", true)?.commit()
         }
     }
 
@@ -147,13 +147,13 @@ class ScoreRepository(
 
     /**
      * Deletes a category safely: reassigns its note definitions and custom symbols
-     * to the fallback category ("NOTES" or "CUSTOM") so no symbol is ever orphaned.
+     * atomically in a Room transaction so no symbol is ever orphaned or retains a stale reference.
      */
     suspend fun deleteCategorySafely(categoryId: String, fallbackCategoryId: String = "NOTES") {
         markCategoryDeleted(categoryId)
-        dao.reassignCategoryNotes(categoryId, fallbackCategoryId)
-        dao.reassignCategoryCustomSymbols(categoryId, "CUSTOM")
-        dao.deleteCategory(categoryId)
+        val cat = dao.getAllCategories().firstOrNull()?.firstOrNull { it.id == categoryId }
+        val catTitle = cat?.titleFa ?: categoryId
+        dao.deleteCategoryAndReassign(categoryId, catTitle, fallbackCategoryId)
     }
 
     suspend fun deleteCategoryWithSymbols(categoryId: String) {
@@ -170,46 +170,86 @@ class ScoreRepository(
 
     suspend fun deleteCategoryAndMoveSymbols(categoryId: String, targetCategoryId: String) {
         markCategoryDeleted(categoryId)
-        dao.reassignCategoryNotes(categoryId, targetCategoryId)
-        dao.reassignCategoryCustomSymbols(categoryId, targetCategoryId)
-        dao.deleteCategory(categoryId)
+        val cat = dao.getAllCategories().firstOrNull()?.firstOrNull { it.id == categoryId }
+        val catTitle = cat?.titleFa ?: categoryId
+        dao.deleteCategoryAndReassign(categoryId, catTitle, targetCategoryId)
     }
 
     // --- NOTE DEFINITIONS MANAGEMENT ---
 
     suspend fun ensureDefaultNoteDefinitions() {
         val prefs = context?.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
-        val hasSeeded = prefs?.getBoolean("has_seeded_default_notes", false) ?: false
-        if (hasSeeded) return
-
         val deletedNotes = prefs?.getStringSet("deleted_default_notes", emptySet()) ?: emptySet()
-        val existing = dao.getAllNoteDefinitions().firstOrNull()
-        if (existing.isNullOrEmpty()) {
-            val defaults = listOf(
-                NoteDefinitionEntity("DEF_WHOLE", "نت گرد", "NOTE_WHOLE", "NOTES", durationValue = "1", isDefault = true),
-                NoteDefinitionEntity("DEF_HALF", "نت سفید", "NOTE_HALF", "NOTES", durationValue = "1/2", isDefault = true),
-                NoteDefinitionEntity("DEF_QUARTER", "نت سیاه", "NOTE_QUARTER", "NOTES", durationValue = "1/4", isDefault = true),
-                NoteDefinitionEntity("DEF_EIGHTH", "نت چنگ", "NOTE_EIGHTH", "NOTES", durationValue = "1/8", isDefault = true),
-                NoteDefinitionEntity("DEF_16TH", "نت دولاچنگ", "NOTE_SIXTEENTH", "NOTES", durationValue = "1/16", isDefault = true),
-                NoteDefinitionEntity("DEF_32ND", "نت سه‌لاچنگ", "NOTE_THIRTYSECOND", "NOTES", durationValue = "1/32", isDefault = true),
-                NoteDefinitionEntity("DEF_64TH", "نت چهارلاچنگ", "NOTE_SIXTYFOURTH", "NOTES", durationValue = "1/64", isDefault = true),
+        val existing = dao.getAllNoteDefinitions().firstOrNull() ?: emptyList()
+        val existingIds = existing.map { it.id }.toSet()
 
-                NoteDefinitionEntity("DEF_R_WHOLE", "سکوت گرد", "REST_WHOLE", "RESTS", durationValue = "1", isDefault = true),
-                NoteDefinitionEntity("DEF_R_HALF", "سکوت سفید", "REST_HALF", "RESTS", durationValue = "1/2", isDefault = true),
-                NoteDefinitionEntity("DEF_R_QUARTER", "سکوت سیاه", "REST_QUARTER", "RESTS", durationValue = "1/4", isDefault = true),
-                NoteDefinitionEntity("DEF_R_EIGHTH", "سکوت چنگ", "REST_EIGHTH", "RESTS", durationValue = "1/8", isDefault = true),
+        val allDefaults = listOf(
+            // 1. NOTES (7)
+            NoteDefinitionEntity("DEF_WHOLE", "نت گرد", "NOTE_WHOLE", "NOTES", durationValue = "1", isDefault = true),
+            NoteDefinitionEntity("DEF_HALF", "نت سفید", "NOTE_HALF", "NOTES", durationValue = "1/2", isDefault = true),
+            NoteDefinitionEntity("DEF_QUARTER", "نت سیاه", "NOTE_QUARTER", "NOTES", durationValue = "1/4", isDefault = true),
+            NoteDefinitionEntity("DEF_EIGHTH", "نت چنگ", "NOTE_EIGHTH", "NOTES", durationValue = "1/8", isDefault = true),
+            NoteDefinitionEntity("DEF_16TH", "نت دولاچنگ", "NOTE_SIXTEENTH", "NOTES", durationValue = "1/16", isDefault = true),
+            NoteDefinitionEntity("DEF_32ND", "نت سه‌لاچنگ", "NOTE_THIRTYSECOND", "NOTES", durationValue = "1/32", isDefault = true),
+            NoteDefinitionEntity("DEF_64TH", "نت چهارلاچنگ", "NOTE_SIXTYFOURTH", "NOTES", durationValue = "1/64", isDefault = true),
 
-                NoteDefinitionEntity("DEF_RING_SINGLE", "حلقه منفرد", "RING_SINGLE", "RING_SOUNDS", isRingSound = true, isDefault = true),
-                NoteDefinitionEntity("DEF_RING_TREMOLO", "ریز حلقه", "RING_TREMOLO", "RING_SOUNDS", isRingSound = true, isDefault = true),
-                NoteDefinitionEntity("DEF_RING_ACCENT", "اشاره حلقه", "RING_ACCENT", "RING_SOUNDS", isRingSound = true, isDefault = true),
-                NoteDefinitionEntity("DEF_RING_DOUBLE", "حلقه جفتی", "RING_DOUBLE", "RING_SOUNDS", isRingSound = true, isDefault = true),
-                NoteDefinitionEntity("DEF_RING_THUMB", "شستی / پرتاب", "RING_THUMB_ROLL", "RING_SOUNDS", isRingSound = true, isDefault = true)
-            ).filter { !deletedNotes.contains(it.id) }
-            if (defaults.isNotEmpty()) {
-                dao.insertNoteDefinitions(defaults)
-            }
-            prefs?.edit()?.putBoolean("has_seeded_default_notes", true)?.apply()
+            // 2. RESTS (7)
+            NoteDefinitionEntity("DEF_R_WHOLE", "سکوت گرد", "REST_WHOLE", "RESTS", durationValue = "1", isDefault = true),
+            NoteDefinitionEntity("DEF_R_HALF", "سکوت سفید", "REST_HALF", "RESTS", durationValue = "1/2", isDefault = true),
+            NoteDefinitionEntity("DEF_R_QUARTER", "سکوت سیاه", "REST_QUARTER", "RESTS", durationValue = "1/4", isDefault = true),
+            NoteDefinitionEntity("DEF_R_EIGHTH", "سکوت چنگ", "REST_EIGHTH", "RESTS", durationValue = "1/8", isDefault = true),
+            NoteDefinitionEntity("DEF_R_16TH", "سکوت دولاچنگ", "REST_SIXTEENTH", "RESTS", durationValue = "1/16", isDefault = true),
+            NoteDefinitionEntity("DEF_R_32ND", "سکوت سه‌لاچنگ", "REST_THIRTYSECOND", "RESTS", durationValue = "1/32", isDefault = true),
+            NoteDefinitionEntity("DEF_R_64TH", "سکوت چهارلاچنگ", "REST_SIXTYFOURTH", "RESTS", durationValue = "1/64", isDefault = true),
+
+            // 3. RING_SOUNDS (5)
+            NoteDefinitionEntity("DEF_RING_SINGLE", "حلقه منفرد", "RING_SINGLE", "RING_SOUNDS", isRingSound = true, isDefault = true),
+            NoteDefinitionEntity("DEF_RING_TREMOLO", "ریز حلقه", "RING_TREMOLO", "RING_SOUNDS", isRingSound = true, isDefault = true),
+            NoteDefinitionEntity("DEF_RING_ACCENT", "اشاره حلقه", "RING_ACCENT", "RING_SOUNDS", isRingSound = true, isDefault = true),
+            NoteDefinitionEntity("DEF_RING_DOUBLE", "حلقه جفتی", "RING_DOUBLE", "RING_SOUNDS", isRingSound = true, isDefault = true),
+            NoteDefinitionEntity("DEF_RING_THUMB", "شستی / پرتاب", "RING_THUMB_ROLL", "RING_SOUNDS", isRingSound = true, isDefault = true),
+
+            // 4. TECHNIQUES (10)
+            NoteDefinitionEntity("DEF_TECH_RAST", "مضراب راست (∨)", "TECH_RAST", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_CHAP", "مضراب چپ (∧)", "TECH_CHAP", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_TOM", "صدای تُم (بم)", "TECH_TOM", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_BAK", "صدای بَک (زیر)", "TECH_BAK", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_MIANEH", "صدای میانه", "TECH_MIANEH", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_RIZ", "ریز (غلتک)", "TECH_RIZ", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_ESHAREH", "اشاره", "TECH_ESHAREH", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_PALANG", "پلنگ", "TECH_PALANG", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_SEVEN", "شماره ۷", "TECH_SEVEN", "TECHNIQUES", isDefault = true),
+            NoteDefinitionEntity("DEF_TECH_EIGHT", "شماره ۸", "TECH_EIGHT", "TECHNIQUES", isDefault = true),
+
+            // 5. BAR_LINES (5)
+            NoteDefinitionEntity("DEF_BAR_SINGLE", "خط میزان ساده", "BAR_SINGLE", "BAR_LINES", isDefault = true),
+            NoteDefinitionEntity("DEF_BAR_DOUBLE", "دولاخط میزان", "BAR_DOUBLE", "BAR_LINES", isDefault = true),
+            NoteDefinitionEntity("DEF_BAR_FINAL", "خط پایان (دوبل ضخیم)", "BAR_FINAL", "BAR_LINES", isDefault = true),
+            NoteDefinitionEntity("DEF_BAR_REPEAT_START", "شروع تکرار (:|)", "BAR_REPEAT_START", "BAR_LINES", isDefault = true),
+            NoteDefinitionEntity("DEF_BAR_REPEAT_END", "پایان تکرار (|:)", "BAR_REPEAT_END", "BAR_LINES", isDefault = true),
+
+            // 6. TIME_SIGNATURES (6)
+            NoteDefinitionEntity("DEF_TIME_2_4", "میزان‌نما ۲/۴", "TIME_2_4", "TIME_SIGNATURES", isDefault = true),
+            NoteDefinitionEntity("DEF_TIME_3_4", "میزان‌نما ۳/۴", "TIME_3_4", "TIME_SIGNATURES", isDefault = true),
+            NoteDefinitionEntity("DEF_TIME_4_4", "میزان‌نما ۴/۴", "TIME_4_4", "TIME_SIGNATURES", isDefault = true),
+            NoteDefinitionEntity("DEF_TIME_6_8", "میزان‌نما ۶/۸", "TIME_6_8", "TIME_SIGNATURES", isDefault = true),
+            NoteDefinitionEntity("DEF_TIME_7_8", "میزان‌نما ۷/۸", "TIME_7_8", "TIME_SIGNATURES", isDefault = true),
+            NoteDefinitionEntity("DEF_TIME_CUSTOM", "میزان‌نما سفارشی", "TIME_CUSTOM", "TIME_SIGNATURES", isDefault = true),
+
+            // 7. TEMPO_TEXT (6)
+            NoteDefinitionEntity("DEF_TEXT_TEMPO_ANDANTE", "Andante ♩=80", "TEXT_TEMPO_ANDANTE", "TEMPO_TEXT", isDefault = true),
+            NoteDefinitionEntity("DEF_TEXT_DYNAMIC_F", "دینامیک forte (f)", "TEXT_DYNAMIC_F", "TEMPO_TEXT", isDefault = true),
+            NoteDefinitionEntity("DEF_TEXT_DYNAMIC_P", "دینامیک piano (p)", "TEXT_DYNAMIC_P", "TEMPO_TEXT", isDefault = true),
+            NoteDefinitionEntity("DEF_TEXT_DYNAMIC_MF", "دینامیک mezzo forte (mf)", "TEXT_DYNAMIC_MF", "TEMPO_TEXT", isDefault = true),
+            NoteDefinitionEntity("DEF_TEXT_LESSON_BADGE", "شماره درس", "TEXT_LESSON_BADGE", "TEMPO_TEXT", isDefault = true),
+            NoteDefinitionEntity("DEF_TEXT_ANNOTATION", "متن و یادداشت", "TEXT_ANNOTATION", "TEMPO_TEXT", isDefault = true)
+        )
+
+        val missingDefaults = allDefaults.filter { it.id !in existingIds && it.id !in deletedNotes }
+        if (missingDefaults.isNotEmpty()) {
+            dao.insertNoteDefinitions(missingDefaults)
         }
+        prefs?.edit()?.putBoolean("has_seeded_all_default_notes", true)?.commit()
     }
 
 
@@ -386,7 +426,8 @@ class ScoreRepository(
         imageUri: Uri,
         name: String,
         categoryId: String = "CUSTOM",
-        isRingSound: Boolean = false
+        isRingSound: Boolean = false,
+        durationValue: String? = null
     ): Pair<CustomSymbolEntity?, String?> {
         val id = UUID.randomUUID().toString()
         val symbolsDir = File(context.filesDir, "symbols").apply { mkdirs() }
@@ -419,6 +460,7 @@ class ScoreRepository(
                 categoryId = categoryId,
                 isRingSound = isRingSound,
                 imagePath = destFile.absolutePath,
+                durationValue = durationValue,
                 createdAt = System.currentTimeMillis()
             )
             dao.insertCustomSymbol(entity)
@@ -472,14 +514,16 @@ class ScoreRepository(
         name: String,
         categoryId: String = "CUSTOM",
         isRingSound: Boolean = false,
-        vectorData: String? = null
+        vectorData: String? = null,
+        durationValue: String? = null
     ): CustomSymbolEntity {
         val entity = CustomSymbolEntity(
             id = UUID.randomUUID().toString(),
             name = name,
             categoryId = categoryId,
             isRingSound = isRingSound,
-            vectorData = vectorData
+            vectorData = vectorData,
+            durationValue = durationValue
         )
         dao.insertCustomSymbol(entity)
         return entity

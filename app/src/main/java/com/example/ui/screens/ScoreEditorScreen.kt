@@ -46,6 +46,7 @@ import com.example.ui.dialogs.ImportDialog
 import com.example.ui.dialogs.NoteDefinitionsManagerDialog
 import com.example.ui.dialogs.PageManagerDialog
 import com.example.ui.dialogs.PageSettingsDialog
+import com.example.ui.dialogs.StaffGuideSettingsDialog
 import com.example.ui.dialogs.TextAnnotationDialog
 import com.example.viewmodel.EditorUiState
 import com.example.viewmodel.ScoreViewModel
@@ -80,6 +81,7 @@ fun ScoreEditorScreen(
     var showCategoryManagerDialog by remember { mutableStateOf(false) }
     var showNoteManagerDialog by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
+    var showStaffGuideDialog by remember { mutableStateOf(false) }
     var showTextAnnotationDialog by remember { mutableStateOf(false) }
     var textAnnotationToEdit by remember { mutableStateOf<ScoreSymbol?>(null) }
 
@@ -120,6 +122,7 @@ fun ScoreEditorScreen(
                 onOpenExport = { showExportDialog = true },
                 onOpenImport = { showImportDialog = true },
                 onOpenCustomSymbols = { showCustomSymbolsDialog = true },
+                onOpenStaffGuideSettings = { showStaffGuideDialog = true },
                 onOpenHelp = { showHelpDialog = true }
             )
         },
@@ -156,6 +159,8 @@ fun ScoreEditorScreen(
                 isSnapMode = state.isSnapMode,
                 showGuides = state.showGuides,
                 highlightLine4 = state.highlightLine4,
+                line4GuideText = state.line4GuideText,
+                line1GuideText = state.line1GuideText,
                 zoomScale = state.zoomScale,
                 panOffsetX = state.panOffsetX,
                 panOffsetY = state.panOffsetY,
@@ -246,11 +251,11 @@ fun ScoreEditorScreen(
             categories = state.categoriesList,
             customSymbols = state.customSymbolsList,
             onDismiss = { showCustomSymbolsDialog = false },
-            onCreateFromUri = { uri, name, catId, isRing ->
-                viewModel.createCustomSymbolFromUri(context, uri, name, catId, isRing)
+            onCreateFromUri = { uri, name, catId, isRing, dur ->
+                viewModel.createCustomSymbolFromUri(context, uri, name, catId, isRing, dur)
             },
-            onCreateCustom = { name, catId, isRing ->
-                viewModel.createCustomSymbol(name, catId, isRing, null)
+            onCreateCustom = { name, catId, isRing, dur ->
+                viewModel.createCustomSymbol(name, catId, isRing, dur)
             },
             onUpdateCustom = { updated ->
                 viewModel.updateCustomSymbol(updated)
@@ -350,6 +355,20 @@ fun ScoreEditorScreen(
                 }
                 showTextAnnotationDialog = false
                 textAnnotationToEdit = null
+            }
+        )
+    }
+
+    if (showStaffGuideDialog) {
+        StaffGuideSettingsDialog(
+            currentLine4Text = state.line4GuideText,
+            currentLine1Text = state.line1GuideText,
+            onDismiss = { showStaffGuideDialog = false },
+            onSave = { l4, l1 ->
+                viewModel.updateStaffGuides(l4, l1)
+            },
+            onResetToDefault = {
+                viewModel.resetStaffGuides()
             }
         )
     }

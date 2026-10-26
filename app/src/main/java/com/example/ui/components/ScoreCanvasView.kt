@@ -45,6 +45,8 @@ fun ScoreCanvasView(
     isSnapMode: Boolean,
     showGuides: Boolean,
     highlightLine4: Boolean,
+    line4GuideText: String = "۴ (حلقه‌ها)",
+    line1GuideText: String = "۱ (تُم)",
     zoomScale: Float,
     panOffsetX: Float,
     panOffsetY: Float,
@@ -297,7 +299,9 @@ fun ScoreCanvasView(
                             page = page,
                             selectedSymbolIds = selectedSymbolIds,
                             showGuides = showGuides,
-                            highlightLine4 = highlightLine4
+                            highlightLine4 = highlightLine4,
+                            line4GuideText = line4GuideText,
+                            line1GuideText = line1GuideText
                         )
 
                         canvas.restore()

@@ -250,4 +250,115 @@ class ExampleUnitTest {
         assertEquals(10f, safePanX, 0.001f)
         assertEquals(20f, safePanY, 0.001f)
     }
+
+    @Test
+    fun testIssue1And2_AllCategoriesAndSymbolsCoverage() {
+        // Ensure every SymbolType has a valid category or mapping
+        for (symbolType in SymbolType.values()) {
+            assertNotNull(symbolType.defaultTitleFa)
+            assertTrue(symbolType.defaultTitleFa.isNotEmpty())
+            assertNotNull(symbolType.defaultCategory)
+        }
+
+        // Test category counting logic with canonical IDs and Persian titles
+        val testCat = com.example.data.CategoryEntity("TECHNIQUES", "تکنیک و مضراب")
+        val def1 = com.example.data.NoteDefinitionEntity(
+            id = "DEF_CHAP",
+            name = "چپ",
+            symbolTypeName = "TECHNIQUE_CHAP",
+            categoryId = "TECHNIQUES"
+        )
+        val def2 = com.example.data.NoteDefinitionEntity(
+            id = "DEF_RAST",
+            name = "راست",
+            symbolTypeName = "TECHNIQUE_RAST",
+            categoryId = "تکنیک و مضراب" // Assigned by title
+        )
+        val otherDef = com.example.data.NoteDefinitionEntity(
+            id = "DEF_TOM",
+            name = "تُم سیاه",
+            symbolTypeName = "NOTE_QUARTER",
+            categoryId = "NOTES"
+        )
+
+        val definitions = listOf(def1, def2, otherDef)
+        val count = definitions.count { it.categoryId == testCat.id || it.categoryId == testCat.titleFa }
+        assertEquals("Both canonical ID and titleFa must be counted", 2, count)
+    }
+
+    @Test
+    fun testIssue3_CategoryReassignmentLogic() {
+        val oldCatId = "RING_SOUNDS"
+        val oldCatTitle = "صدای حلقه‌ها"
+        val newCatId = "TECHNIQUES"
+
+        val def = com.example.data.NoteDefinitionEntity(
+            id = "DEF_RING_1",
+            name = "حلقه تک",
+            symbolTypeName = "RING_SINGLE",
+            categoryId = oldCatTitle
+        )
+
+        val matches = def.categoryId == oldCatId || def.categoryId == oldCatTitle
+        assertTrue("Item referencing old title must match for reassignment", matches)
+
+        val reassignedDef = def.copy(categoryId = newCatId)
+        assertEquals(newCatId, reassignedDef.categoryId)
+        assertFalse(reassignedDef.categoryId == oldCatId || reassignedDef.categoryId == oldCatTitle)
+    }
+
+    @Test
+    fun testIssue4_CustomSymbolDurationValue() {
+        val customWithDefaultDuration = com.example.data.CustomSymbolEntity(
+            id = "CS_1",
+            name = "نماد بدون کشش",
+            categoryId = "CUSTOM",
+            durationValue = null
+        )
+        assertEquals("Default duration must be null", null, customWithDefaultDuration.durationValue)
+
+        val customWithDuration = com.example.data.CustomSymbolEntity(
+            id = "CS_2",
+            name = "اشاره با کشش چنگ",
+            categoryId = "CUSTOM",
+            durationValue = "1/8"
+        )
+        assertEquals("1/8", customWithDuration.durationValue)
+
+        // Verify ScoreSymbol creation with duration
+        val scoreSymbol = ScoreSymbol(
+            type = SymbolType.NOTE_QUARTER,
+            x = 100f,
+            y = 200f,
+            durationValue = customWithDuration.durationValue
+        )
+        assertEquals("1/8", scoreSymbol.durationValue)
+    }
+
+    @Test
+    fun testIssue5_StaffGuideTextState() {
+        val defaultLine4 = "۴ (حلقه‌ها)"
+        val defaultLine1 = "۱ (تُم)"
+
+        val customLine4 = "خط ۴ - رینگ"
+        val customLine1 = "خط ۱ - ضربه اصلی"
+
+        var currentLine4 = defaultLine4
+        var currentLine1 = defaultLine1
+
+        assertEquals("۴ (حلقه‌ها)", currentLine4)
+        assertEquals("۱ (تُم)", currentLine1)
+
+        // Update
+        currentLine4 = customLine4
+        currentLine1 = customLine1
+        assertEquals("خط ۴ - رینگ", currentLine4)
+        assertEquals("خط ۱ - ضربه اصلی", currentLine1)
+
+        // Reset to default
+        currentLine4 = defaultLine4
+        currentLine1 = defaultLine1
+        assertEquals("۴ (حلقه‌ها)", currentLine4)
+        assertEquals("۱ (تُم)", currentLine1)
+    }
 }

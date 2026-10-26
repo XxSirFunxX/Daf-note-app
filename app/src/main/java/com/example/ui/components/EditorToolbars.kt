@@ -99,6 +99,7 @@ fun EditorTopBar(
     onOpenImport: () -> Unit,
     onOpenCustomSymbols: () -> Unit,
     onOpenHelp: () -> Unit = {},
+    onOpenStaffGuideSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -215,6 +216,12 @@ fun EditorTopBar(
                         leadingIcon = { Icon(Icons.Default.HelpOutline, contentDescription = null) },
                         onClick = { menuExpanded = false; onOpenHelp() },
                         modifier = Modifier.testTag("menu_help")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("متن راهنمای خطوط حامل") },
+                        leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
+                        onClick = { menuExpanded = false; onOpenStaffGuideSettings() },
+                        modifier = Modifier.testTag("menu_staff_guide_settings")
                     )
                 }
             }

@@ -197,11 +197,14 @@ fun SymbolLibrarySheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 1. Active defined symbols for this category
-                val isManagedCategory = activeCategoryId in setOf("NOTES", "RESTS", "RING_SOUNDS") ||
-                                        noteDefinitions.any { it.categoryId == activeCategoryId }
+                val activeCategory = displayCategories.firstOrNull { it.id == activeCategoryId }
+                val activeCategoryTitle = activeCategory?.titleFa ?: activeCategoryId
 
-                if (isManagedCategory) {
-                    val activeDefs = noteDefinitions.filter { it.categoryId == activeCategoryId && !it.isHidden }
+                val activeDefs = noteDefinitions.filter {
+                    (it.categoryId == activeCategoryId || it.categoryId == activeCategoryTitle) && !it.isHidden
+                }
+
+                if (activeDefs.isNotEmpty()) {
                     items(activeDefs) { def ->
                         val symType = try { SymbolType.valueOf(def.symbolTypeName) } catch (e: Exception) { null }
                         if (symType != null) {
@@ -217,7 +220,9 @@ fun SymbolLibrarySheet(
                 } else {
                     val hiddenDefNames = noteDefinitions.filter { it.isHidden }.map { it.symbolTypeName }.toSet()
                     val standardSymbols = SymbolType.values().filter { 
-                        it.defaultCategory.name == activeCategoryId && !hiddenDefNames.contains(it.name)
+                        (it.defaultCategory.name == activeCategoryId || it.defaultCategory.name == activeCategoryTitle) &&
+                                !hiddenDefNames.contains(it.name) &&
+                                it != SymbolType.CUSTOM_SYMBOL
                     }
                     items(standardSymbols) { symbolType ->
                         val isSelected = symbolType == activeSymbol && activeCustomSymbolId == null
@@ -234,7 +239,7 @@ fun SymbolLibrarySheet(
                 val filteredCustom = (if (activeCategoryId == "CUSTOM") {
                     customSymbols
                 } else {
-                    customSymbols.filter { it.categoryId == activeCategoryId }
+                    customSymbols.filter { it.categoryId == activeCategoryId || it.categoryId == activeCategoryTitle }
                 }).filter { !it.isHidden }
 
 

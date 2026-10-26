@@ -91,7 +91,9 @@ object ScoreRenderer {
         page: ScorePage,
         selectedSymbolIds: Set<String> = emptySet(),
         showGuides: Boolean = true,
-        highlightLine4: Boolean = true
+        highlightLine4: Boolean = true,
+        line4GuideText: String = "۴ (حلقه‌ها)",
+        line1GuideText: String = "۱ (تُم)"
     ) {
         val width = page.paperSize.widthPt
         val height = page.paperSize.heightPt
@@ -119,7 +121,7 @@ object ScoreRenderer {
         // 3. Staves
         val staves = page.generateStaves()
         for (staff in staves) {
-            drawStaffSystem(canvas, staff, highlightLine4, showGuides)
+            drawStaffSystem(canvas, staff, highlightLine4, showGuides, line4GuideText, line1GuideText)
         }
 
         // 4. Symbols
@@ -150,7 +152,9 @@ object ScoreRenderer {
         canvas: Canvas,
         staff: StaffSystem,
         highlightLine4: Boolean,
-        showGuides: Boolean
+        showGuides: Boolean,
+        line4GuideText: String = "۴ (حلقه‌ها)",
+        line1GuideText: String = "۱ (تُم)"
     ) {
         // Line 1 (Bottom line - Bass / Tom)
         canvas.drawLine(staff.left, staff.line1Y, staff.right, staff.line1Y, staffPaint)
@@ -179,8 +183,12 @@ object ScoreRenderer {
                 textSize = 10f
                 textAlign = Paint.Align.RIGHT
             }
-            canvas.drawText("۴ (حلقه‌ها)", staff.left - 8f, staff.line4Y + 3f, guidePaint)
-            canvas.drawText("۱ (تُم)", staff.left - 8f, staff.line1Y + 3f, guidePaint)
+            if (line4GuideText.isNotBlank()) {
+                canvas.drawText(line4GuideText, staff.left - 8f, staff.line4Y + 3f, guidePaint)
+            }
+            if (line1GuideText.isNotBlank()) {
+                canvas.drawText(line1GuideText, staff.left - 8f, staff.line1Y + 3f, guidePaint)
+            }
         }
     }
 

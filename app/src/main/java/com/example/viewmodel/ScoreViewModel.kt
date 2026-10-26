@@ -72,6 +72,8 @@ data class EditorUiState(
     val referenceImageUri: String? = null,
     val showReferenceBackdrop: Boolean = false,
     val isSaving: Boolean = false,
+    val line4GuideText: String = "۴ (حلقه‌ها)",
+    val line1GuideText: String = "۱ (تُم)",
     val helpTopicsList: List<HelpTopicEntity> = emptyList()
 )
 
@@ -88,6 +90,11 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val db = AppDatabase.getInstance(application)
         repository = ScoreRepository(db.projectDao(), application)
 
+        val prefs = application.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        val savedLine4 = prefs.getString("staff_guide_line4", "۴ (حلقه‌ها)") ?: "۴ (حلقه‌ها)"
+        val savedLine1 = prefs.getString("staff_guide_line1", "۱ (تُم)") ?: "۱ (تُم)"
+        _uiState.update { it.copy(line4GuideText = savedLine4, line1GuideText = savedLine1) }
+
         viewModelScope.launch {
             repository.ensureDefaultCategories()
             repository.ensureDefaultNoteDefinitions()
@@ -102,7 +109,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
                 }
         }
 
-        val prefs = application.getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
         val hasSeeded = prefs.getBoolean("has_seeded_starter", false)
 
         viewModelScope.launch {
@@ -424,7 +430,8 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             y = finalY,
             isRingSound = isRingSound,
             imagePath = custom.imagePath,
-            customData = custom.id
+            customData = custom.id,
+            durationValue = custom.durationValue
         )
 
         val updatedSymbols = page.symbols + newSymbol
@@ -831,7 +838,27 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- CUSTOM SYMBOLS ---
+    // --- STAFF GUIDE TEXT CUSTOMIZATION ---
+
+    fun updateStaffGuides(line4: String, line1: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString("staff_guide_line4", line4.trim())
+            .putString("staff_guide_line1", line1.trim())
+            .apply()
+        _uiState.update { it.copy(line4GuideText = line4.trim(), line1GuideText = line1.trim()) }
+        showNotification("متن راهنمای خطوط حامل به‌روزرسانی شد")
+    }
+
+    fun resetStaffGuides() {
+        val prefs = getApplication<Application>().getSharedPreferences("score_app_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .remove("staff_guide_line4")
+            .remove("staff_guide_line1")
+            .apply()
+        _uiState.update { it.copy(line4GuideText = "۴ (حلقه‌ها)", line1GuideText = "۱ (تُم)") }
+        showNotification("متن راهنمای خطوط حامل به پیش‌فرض بازگردانده شد")
+    }
 
     // --- CUSTOM SYMBOLS ---
 
@@ -841,10 +868,11 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         categoryId: String,
         isRingSound: Boolean,
+        durationValue: String? = null,
         onResult: ((Boolean, String?) -> Unit)? = null
     ) {
         viewModelScope.launch {
-            val (entity, error) = repository.addCustomSymbolFromUri(context, imageUri, name, categoryId, isRingSound)
+            val (entity, error) = repository.addCustomSymbolFromUri(context, imageUri, name, categoryId, isRingSound, durationValue)
             if (entity != null) {
                 selectCustomSymbol(entity)
                 val msg = "نماد سفارشی '$name' با موفقیت به کتابخانه افزوده شد"
@@ -908,10 +936,11 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         categoryId: String = "CUSTOM",
         isRingSound: Boolean = false,
-        vectorPath: String? = null
+        vectorPath: String? = null,
+        durationValue: String? = null
     ) {
         viewModelScope.launch {
-            val entity = repository.addCustomSymbol(name, categoryId, isRingSound, vectorPath)
+            val entity = repository.addCustomSymbol(name, categoryId, isRingSound, vectorPath, durationValue)
             selectCustomSymbol(entity)
             showNotification("نماد سفارشی '$name' با موفقیت افزوده شد")
         }

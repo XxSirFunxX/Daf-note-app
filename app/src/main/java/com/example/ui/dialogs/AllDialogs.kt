@@ -61,7 +61,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.RadioButton
@@ -774,8 +776,8 @@ fun CustomSymbolsManagerDialog(
     categories: List<CategoryEntity>,
     customSymbols: List<CustomSymbolEntity>,
     onDismiss: () -> Unit,
-    onCreateFromUri: (Uri, String, String, Boolean) -> Unit,
-    onCreateCustom: (String, String, Boolean) -> Unit,
+    onCreateFromUri: (Uri, String, String, Boolean, String?) -> Unit,
+    onCreateCustom: (String, String, Boolean, String?) -> Unit,
     onUpdateCustom: (CustomSymbolEntity) -> Unit,
     onDeleteCustom: (String) -> Unit,
     onSelectForPlacement: (CustomSymbolEntity) -> Unit,
@@ -786,6 +788,8 @@ fun CustomSymbolsManagerDialog(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(if (customSymbols.isEmpty()) 0 else 1) }
+
+    val commonDurations = listOf("پیش‌فرض", "1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64")
 
     // Bulk Import State
     var bulkImportPreview by remember { mutableStateOf<BulkImportPreview?>(null) }
@@ -814,6 +818,7 @@ fun CustomSymbolsManagerDialog(
     var name by remember { mutableStateOf("") }
     var selectedCategoryId by remember { mutableStateOf(categories.firstOrNull { it.id == "CUSTOM" }?.id ?: categories.firstOrNull()?.id ?: "CUSTOM") }
     var isRingSound by remember { mutableStateOf(false) }
+    var durationValue by remember { mutableStateOf<String?>(null) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var imageErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -823,6 +828,7 @@ fun CustomSymbolsManagerDialog(
     var editName by remember { mutableStateOf("") }
     var editCategoryId by remember { mutableStateOf("") }
     var editIsRingSound by remember { mutableStateOf(false) }
+    var editDurationValue by remember { mutableStateOf<String?>(null) }
     var editNewImageUri by remember { mutableStateOf<Uri?>(null) }
     var editPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var editImageErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -1073,6 +1079,28 @@ fun CustomSymbolsManagerDialog(
                             }
                         }
 
+                        // Duration selector
+                        Text("میزان کشش (Duration):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            commonDurations.forEach { dur ->
+                                val isSelected = if (dur == "پیش‌فرض") durationValue == null else durationValue == dur
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { durationValue = if (dur == "پیش‌فرض") null else dur },
+                                    label = { Text(dur, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                )
+                            }
+                        }
+
                         // Ring Sound Rule Checkbox
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1161,8 +1189,12 @@ fun CustomSymbolsManagerDialog(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(sym.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                val catTitle = categories.firstOrNull { it.id == sym.categoryId }?.titleFa ?: sym.categoryId
+                                                val catTitle = categories.firstOrNull { it.id == sym.categoryId || it.titleFa == sym.categoryId }?.titleFa ?: sym.categoryId
                                                 Text(catTitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                                if (sym.durationValue != null) {
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text("• کشش: ${sym.durationValue}", fontSize = 10.sp, color = Color.Gray)
+                                                }
                                                 if (sym.isRingSound) {
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text("• صدای حلقه (خط ۴)", fontSize = 10.sp, color = Color(0xFF8C2812), fontWeight = FontWeight.SemiBold)
@@ -1190,6 +1222,7 @@ fun CustomSymbolsManagerDialog(
                                                 editName = sym.name
                                                 editCategoryId = sym.categoryId
                                                 editIsRingSound = sym.isRingSound
+                                                editDurationValue = sym.durationValue
                                                 editNewImageUri = null
                                                 editPreviewBitmap = null
                                                 editImageErrorMessage = null
@@ -1231,9 +1264,9 @@ fun CustomSymbolsManagerDialog(
                         if (name.isNotBlank()) {
                             val uri = selectedImageUri
                             if (uri != null) {
-                                onCreateFromUri(uri, name, selectedCategoryId, isRingSound)
+                                onCreateFromUri(uri, name, selectedCategoryId, isRingSound, durationValue)
                             } else {
-                                onCreateCustom(name, selectedCategoryId, isRingSound)
+                                onCreateCustom(name, selectedCategoryId, isRingSound, durationValue)
                             }
                             onDismiss()
                         }
@@ -1361,6 +1394,23 @@ fun CustomSymbolsManagerDialog(
                         }
                     }
 
+                    Text("میزان کشش (Duration):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        commonDurations.forEach { dur ->
+                            val isSel = if (dur == "پیش‌فرض") editDurationValue == null else editDurationValue == dur
+                            FilterChip(
+                                selected = isSel,
+                                onClick = { editDurationValue = if (dur == "پیش‌فرض") null else dur },
+                                label = { Text(dur, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal) }
+                            )
+                        }
+                    }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -1381,7 +1431,12 @@ fun CustomSymbolsManagerDialog(
                     onClick = {
                         if (editName.isNotBlank()) {
                             val newUri = editNewImageUri
-                            val updatedSym = sym.copy(name = editName.trim(), categoryId = editCategoryId, isRingSound = editIsRingSound)
+                            val updatedSym = sym.copy(
+                                name = editName.trim(),
+                                categoryId = editCategoryId,
+                                isRingSound = editIsRingSound,
+                                durationValue = editDurationValue
+                            )
                             if (newUri != null) {
                                 onReplaceImage(updatedSym, newUri)
                             } else {
@@ -1814,8 +1869,8 @@ fun CategoryManagerDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(categories) { cat ->
-                        val symCount = customSymbols.count { it.categoryId == cat.id } +
-                                noteDefinitions.count { it.categoryId == cat.id }
+                        val symCount = customSymbols.count { it.categoryId == cat.id || it.categoryId == cat.titleFa } +
+                                noteDefinitions.count { it.categoryId == cat.id || it.categoryId == cat.titleFa }
 
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -1926,8 +1981,8 @@ fun CategoryManagerDialog(
     // Delete Category modal
     if (categoryToDelete != null) {
         val cat = categoryToDelete!!
-        val symCount = customSymbols.count { it.categoryId == cat.id } +
-                noteDefinitions.count { it.categoryId == cat.id }
+        val symCount = customSymbols.count { it.categoryId == cat.id || it.categoryId == cat.titleFa } +
+                noteDefinitions.count { it.categoryId == cat.id || it.categoryId == cat.titleFa }
 
         if (symCount == 0) {
             // Category is empty
@@ -2479,5 +2534,89 @@ fun NoteDefinitionsManagerDialog(
             }
         )
     }
+}
+
+// ==========================================
+// 9. STAFF GUIDE SETTINGS DIALOG
+// ==========================================
+
+@Composable
+fun StaffGuideSettingsDialog(
+    currentLine4Text: String,
+    currentLine1Text: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit,
+    onResetToDefault: () -> Unit
+) {
+    var line4 by remember { mutableStateOf(currentLine4Text) }
+    var line1 by remember { mutableStateOf(currentLine1Text) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("متن راهنمای خطوط حامل", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "متن نمایش‌داده‌شده در کنار خطوط ۴ (بالا) و ۱ (پایین) حامل را سفارشی‌سازی کنید:",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = line4,
+                    onValueChange = { line4 = it },
+                    label = { Text("متن راهنمای خط ۴ (پیش‌فرض: ۴ (حلقه‌ها))") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("input_guide_line4")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = line1,
+                    onValueChange = { line1 = it },
+                    label = { Text("متن راهنمای خط ۱ (پیش‌فرض: ۱ (تُم))") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("input_guide_line1")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                TextButton(
+                    onClick = {
+                        line4 = "۴ (حلقه‌ها)"
+                        line1 = "۱ (تُم)"
+                        onResetToDefault()
+                    },
+                    modifier = Modifier.align(Alignment.End).testTag("btn_reset_guide_defaults")
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("بازیابی متن پیش‌فرض", fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(line4.trim(), line1.trim())
+                    onDismiss()
+                },
+                modifier = Modifier.testTag("btn_save_guide_text")
+            ) {
+                Text("ذخیره")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("انصراف") }
+        }
+    )
 }
 

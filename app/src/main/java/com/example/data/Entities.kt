@@ -52,6 +52,7 @@ data class CustomSymbolEntity(
     val isHidden: Boolean = false,
     val vectorData: String? = null,
     val imagePath: String? = null,
+    val durationValue: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
 
