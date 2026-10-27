@@ -428,8 +428,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             staves = staves
         )
 
-        recordUndo(page.symbols)
-
         val newSymbol = ScoreSymbol(
             type = SymbolType.CUSTOM_SYMBOL,
             category = SymbolCategory.CUSTOM,
@@ -461,8 +459,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
             isSnapMode = _uiState.value.isSnapMode,
             staves = staves
         )
-
-        recordUndo(page.symbols)
 
         val newSymbol = ScoreSymbol(
             type = type,
@@ -513,9 +509,12 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         updateActivePageSymbols(updatedSymbols, recordHistory = false)
     }
 
-    fun onSymbolDragFinished() {
+    fun onSymbolDragStarted() {
         val project = _uiState.value.currentProject ?: return
         recordUndo(project.activePage.symbols)
+    }
+
+    fun onSymbolDragFinished() {
         triggerAutoSave()
     }
 
@@ -525,7 +524,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedIds.isEmpty()) return
 
         val page = project.activePage
-        recordUndo(page.symbols)
 
         val updated = page.symbols.map { sym ->
             if (selectedIds.contains(sym.id)) {
@@ -542,7 +540,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedIds.isEmpty()) return
 
         val page = project.activePage
-        recordUndo(page.symbols)
 
         val updated = page.symbols.map { sym ->
             if (selectedIds.contains(sym.id)) {
@@ -570,8 +567,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         // Configurable step based on staff line spacing
         val step = page.lineSpacing * 0.5f
         val deltaY = if (directionUp) -step else step
-
-        recordUndo(page.symbols)
 
         val updatedSymbols = page.symbols.map { sym ->
             if (selectedIds.contains(sym.id)) {
@@ -617,7 +612,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val page = project.activePage
-        recordUndo(page.symbols)
 
         val updatedSymbols = page.symbols.map { sym ->
             if (selectedIds.contains(sym.id)) {
@@ -639,7 +633,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedIds.isEmpty()) return
 
         val page = project.activePage
-        recordUndo(page.symbols)
 
         val newClones = mutableListOf<ScoreSymbol>()
         val newSelectedIds = mutableSetOf<String>()
@@ -668,7 +661,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         if (selectedIds.isEmpty()) return
 
         val page = project.activePage
-        recordUndo(page.symbols)
 
         val remaining = page.symbols.filterNot { selectedIds.contains(it.id) }
         updateActivePageSymbols(remaining)
@@ -1145,8 +1137,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val posX = candidateX ?: (page.paperSize.widthPt / 2f)
         val posY = candidateY ?: (page.marginTop - 20f)
 
-        recordUndo(page.symbols)
-
         val stylingData = "bold=$isBold;italic=$isItalic;align=$alignment;fontSize=$fontSizeSp"
         val scaleVal = (fontSizeSp / 14f).coerceIn(0.5f, 3.5f)
 
@@ -1179,8 +1169,6 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val project = _uiState.value.currentProject ?: return
         val page = project.activePage
-
-        recordUndo(page.symbols)
 
         val stylingData = "bold=$isBold;italic=$isItalic;align=$alignment;fontSize=$fontSizeSp"
         val scaleVal = (fontSizeSp / 14f).coerceIn(0.5f, 3.5f)
@@ -1241,105 +1229,154 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     fun exportToPdf(context: Context) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val file = ScoreExporter.exportToPdf(context, project)
-            ScoreExporter.shareFile(context, file, "application/pdf", "اشتراک‌گذاری فایل PDF نت‌نویسی")
-            showNotification("فایل PDF با موفقیت آماده شد")
-        } catch (e: Exception) {
-            showNotification("خطا در صدور PDF: ${e.localizedMessage}")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = ScoreExporter.exportToPdf(context, project)
+                withContext(Dispatchers.Main) {
+                    ScoreExporter.shareFile(context, file, "application/pdf", "اشتراک‌گذاری فایل PDF نت‌نویسی")
+                    showNotification("فایل PDF با موفقیت آماده شد")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در صدور PDF: ${e.localizedMessage}")
+                }
+            }
         }
     }
 
     fun exportActivePageImage(context: Context, isPng: Boolean = true) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val file = ScoreExporter.exportPageToImage(context, project.activePage, isPng = isPng)
-            val mime = if (isPng) "image/png" else "image/jpeg"
-            ScoreExporter.shareFile(context, file, mime, "اشتراک‌گذاری تصویر صفحه")
-            showNotification("تصویر صفحه با کیفیت بالا ایجاد شد")
-        } catch (e: Exception) {
-            showNotification("خطا در ایجاد تصویر: ${e.localizedMessage}")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = ScoreExporter.exportPageToImage(context, project.activePage, isPng = isPng)
+                val mime = if (isPng) "image/png" else "image/jpeg"
+                withContext(Dispatchers.Main) {
+                    ScoreExporter.shareFile(context, file, mime, "اشتراک‌گذاری تصویر صفحه")
+                    showNotification("تصویر صفحه با کیفیت بالا ایجاد شد")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در ایجاد تصویر: ${e.localizedMessage}")
+                }
+            }
         }
     }
 
     fun exportProjectFile(context: Context) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val file = ScoreExporter.exportProjectFile(context, project)
-            ScoreExporter.shareFile(context, file, "application/json", "ارسال فایل قابل ویرایش پروژه")
-            showNotification("فایل پروژه با موفقیت صادر شد")
-        } catch (e: Exception) {
-            showNotification("خطا در صدور پروژه: ${e.localizedMessage}")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = ScoreExporter.exportProjectFile(context, project)
+                withContext(Dispatchers.Main) {
+                    ScoreExporter.shareFile(context, file, "application/json", "ارسال فایل قابل ویرایش پروژه")
+                    showNotification("فایل پروژه با موفقیت صادر شد")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در صدور پروژه: ${e.localizedMessage}")
+                }
+            }
         }
     }
 
     fun savePdfToUri(context: Context, uri: Uri) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val ok = ScoreExporter.writePdfToUri(context, uri, project)
-            if (ok) {
-                showNotification("فایل PDF با موفقیت در محل انتخابی ذخیره شد")
-            } else {
-                showNotification("خطا در ذخیره‌سازی فایل PDF در مسیر انتخابی")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ok = ScoreExporter.writePdfToUri(context, uri, project)
+                withContext(Dispatchers.Main) {
+                    if (ok) {
+                        showNotification("فایل PDF با موفقیت در محل انتخابی ذخیره شد")
+                    } else {
+                        showNotification("خطا در ذخیره‌سازی فایل PDF در مسیر انتخابی")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در نوشتن فایل PDF: ${e.localizedMessage}")
+                }
             }
-        } catch (e: Exception) {
-            showNotification("خطا در نوشتن فایل PDF: ${e.localizedMessage}")
         }
     }
 
     fun saveImageToUri(context: Context, uri: Uri, isPng: Boolean = true) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val ok = ScoreExporter.writeImageToUri(context, uri, project.activePage, isPng = isPng)
-            if (ok) {
-                showNotification("تصویر صفحه با موفقیت در محل انتخابی ذخیره شد")
-            } else {
-                showNotification("خطا در ذخیره‌سازی تصویر در مسیر انتخابی")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ok = ScoreExporter.writeImageToUri(context, uri, project.activePage, isPng = isPng)
+                withContext(Dispatchers.Main) {
+                    if (ok) {
+                        showNotification("تصویر صفحه با موفقیت در محل انتخابی ذخیره شد")
+                    } else {
+                        showNotification("خطا در ذخیره‌سازی تصویر در مسیر انتخابی")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در ذخیره تصویر: ${e.localizedMessage}")
+                }
             }
-        } catch (e: Exception) {
-            showNotification("خطا در ذخیره تصویر: ${e.localizedMessage}")
         }
     }
 
     fun saveProjectToUri(context: Context, uri: Uri) {
         val project = _uiState.value.currentProject ?: return
-        try {
-            val ok = ScoreExporter.writeProjectToUri(context, uri, project)
-            if (ok) {
-                showNotification("فایل پروژه (.dafnt) با موفقیت در محل انتخابی ذخیره شد")
-            } else {
-                showNotification("خطا در ذخیره فایل پروژه")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ok = ScoreExporter.writeProjectToUri(context, uri, project)
+                withContext(Dispatchers.Main) {
+                    if (ok) {
+                        showNotification("فایل پروژه (.dafnt) با موفقیت در محل انتخابی ذخیره شد")
+                    } else {
+                        showNotification("خطا در ذخیره فایل پروژه")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showNotification("خطا در ذخیره پروژه: ${e.localizedMessage}")
+                }
             }
-        } catch (e: Exception) {
-            showNotification("خطا در ذخیره پروژه: ${e.localizedMessage}")
         }
     }
 
     fun importProjectContent(jsonOrXml: String) {
-        if (jsonOrXml.contains("score-partwise") || jsonOrXml.contains("<?xml")) {
-            val res = ScoreImporter.parseMusicXml(jsonOrXml)
-            if (res.isSuccess && res.data != null) {
-                viewModelScope.launch {
-                    repository.saveProject(res.data)
-                    openProject(res.data)
+        viewModelScope.launch(Dispatchers.IO) {
+            if (jsonOrXml.contains("score-partwise") || jsonOrXml.contains("<?xml")) {
+                val res = ScoreImporter.parseMusicXml(jsonOrXml)
+                withContext(Dispatchers.Main) {
+                    if (res.isSuccess && res.data != null) {
+                        repository.saveProject(res.data)
+                        openProject(res.data)
+                        val incomp = res.report?.incompatibleElements?.joinToString("، ") ?: ""
+                        val msg = "نت‌های MusicXML وارد شدند. (${res.report?.importedNotesCount} نت)" +
+                                if (incomp.isNotBlank()) "\nعناصر تطبیق‌یافته: $incomp" else ""
+                        showNotification(msg)
+                    } else {
+                        showNotification(res.errorMessage ?: "خطا در خواندن MusicXML")
+                    }
                 }
-                val incomp = res.report?.incompatibleElements?.joinToString("، ") ?: ""
-                val msg = "نت‌های MusicXML وارد شدند. (${res.report?.importedNotesCount} نت)" +
-                        if (incomp.isNotBlank()) "\nعناصر تطبیق‌یافته: $incomp" else ""
-                showNotification(msg)
             } else {
-                showNotification(res.errorMessage ?: "خطا در خواندن MusicXML")
-            }
-        } else {
-            val res = ScoreImporter.parseProjectJson(jsonOrXml)
-            if (res.isSuccess && res.data != null) {
-                viewModelScope.launch {
-                    repository.saveProject(res.data)
-                    openProject(res.data)
+                val res = ScoreImporter.parseProjectJson(
+                    jsonString = jsonOrXml,
+                    context = getApplication(),
+                    generateNewId = true
+                )
+                withContext(Dispatchers.Main) {
+                    if (res.isSuccess && res.data != null) {
+                        val existingTitles = _uiState.value.projectsList.map { it.title.trim() }
+                        val safeTitle = if (existingTitles.contains(res.data.title.trim())) {
+                            "${res.data.title} (کپی)"
+                        } else {
+                            res.data.title
+                        }
+                        val finalProject = res.data.copy(title = safeTitle)
+                        repository.saveProject(finalProject)
+                        openProject(finalProject)
+                        showNotification("پروژه با موفقیت بارگذاری شد")
+                    } else {
+                        showNotification(res.errorMessage ?: "فرمت فایل نامعتبر است")
+                    }
                 }
-                showNotification("پروژه با موفقیت بارگذاری شد")
-            } else {
-                showNotification(res.errorMessage ?: "فرمت فایل نامعتبر است")
             }
         }
     }

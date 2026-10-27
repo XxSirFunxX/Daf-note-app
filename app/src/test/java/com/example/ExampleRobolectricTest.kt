@@ -958,6 +958,54 @@ class ExampleRobolectricTest {
         pngBitmap.recycle()
         jpgBitmap.recycle()
     }
+
+    @Test
+    fun testImportProjectLimitsAndNewUuid() {
+        val originalId = "orig-id-12345"
+        val proj = ScoreProject(id = originalId, title = "تست پروژه")
+        val json = ScoreExporter.projectToJson(proj)
+
+        // generateNewId = false preserves original ID
+        val resPreserved = ScoreImporter.parseProjectJson(json, generateNewId = false)
+        assertTrue(resPreserved.isSuccess)
+        assertEquals(originalId, resPreserved.data?.id)
+
+        // generateNewId = true assigns a distinct fresh UUID
+        val resNew = ScoreImporter.parseProjectJson(json, generateNewId = true)
+        assertTrue(resNew.isSuccess)
+        assertNotNull(resNew.data?.id)
+        org.junit.Assert.assertNotEquals(originalId, resNew.data?.id)
+    }
+
+    @Test
+    fun testBase64CustomSymbolExportAndImport() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val testFile = File(context.filesDir, "test_sym.png").apply {
+            writeBytes(byteArrayOf(0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(), 0x0D, 0x0A, 0x1A, 0x0A))
+        }
+
+        val sym = ScoreSymbol(
+            type = SymbolType.CUSTOM_SYMBOL,
+            category = SymbolCategory.CUSTOM,
+            name = "تست سفارشی",
+            x = 100f,
+            y = 100f,
+            imagePath = testFile.absolutePath
+        )
+        val proj = ScoreProject(title = "پروژه با تصویر", pages = listOf(ScorePage(symbols = listOf(sym))))
+        val json = ScoreExporter.projectToJson(proj)
+
+        // JSON must contain imageBase64
+        assertTrue(json.contains("imageBase64"))
+
+        // Import project with context to decode Base64
+        val res = ScoreImporter.parseProjectJson(json, context = context, generateNewId = true)
+        assertTrue(res.isSuccess)
+        val importedSym = res.data?.pages?.firstOrNull()?.symbols?.firstOrNull()
+        assertNotNull(importedSym)
+        assertNotNull(importedSym?.imagePath)
+        assertTrue(File(importedSym!!.imagePath!!).exists())
+    }
 }
 
 

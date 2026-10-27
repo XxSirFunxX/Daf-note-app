@@ -1,18 +1,30 @@
-name: Build and Release Debug APK
+name: Build, Test & Release
 
 on:
   push:
     branches:
       - main
       - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish as GitHub Release'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build & Release APK
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -31,65 +43,70 @@ jobs:
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x gradlew
 
-      - name: Setup Signing Keystore
+      - name: Run Unit Tests
+        run: ./gradlew :app:testDebugUnitTest --continue
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+
+      - name: Setup Release Keystore
+        id: setup_keystore
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -e
-          echo "Setting up stable signing keystore..."
-
-          # Safe Diagnostics (Only reporting yes/no, never secret content)
-          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-            echo "Diagnostic: GitHub Secret RELEASE_KEYSTORE_BASE64 is set: yes"
-          else
-            echo "Diagnostic: GitHub Secret RELEASE_KEYSTORE_BASE64 is set: no"
-          fi
-
-          if [ -f "debug.keystore.base64" ]; then
-            echo "Diagnostic: Repository debug.keystore.base64 exists: yes"
-          else
-            echo "Diagnostic: Repository debug.keystore.base64 exists: no"
-          fi
-
-          # Keystore Restoration Logic (Prioritizing GitHub Secrets)
-          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-            echo "Restoring persistent keystore from GitHub Secrets (RELEASE_KEYSTORE_BASE64)..."
-            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > debug.keystore
-          elif [ -f "debug.keystore.base64" ]; then
-            echo "Restoring persistent keystore from repository debug.keystore.base64..."
-            base64 --decode debug.keystore.base64 > debug.keystore
-          elif [ -f "debug.keystore" ]; then
-            echo "Using existing debug.keystore in workspace..."
-          else
-            echo "Error: Persistent keystore is missing! Please configure RELEASE_KEYSTORE_BASE64 in GitHub Repository Secrets (Settings -> Secrets and variables -> Actions)." >&2
+          echo "Validating release signing credentials..."
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Missing required release signing secrets! RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD must be configured in GitHub Repository Secrets."
             exit 1
           fi
 
-          # Validation
-          if [ -s "debug.keystore" ]; then
-            echo "Diagnostic: debug.keystore exists and is nonempty: yes"
-            echo "Keystore verified successfully. Size: $(wc -c < debug.keystore) bytes."
-          else
-            echo "Diagnostic: debug.keystore exists and is nonempty: no"
-            echo "Error: debug.keystore is missing or empty after decoding!" >&2
+          KEYSTORE_DEST="$RUNNER_TEMP/release.keystore"
+          echo "Decoding release keystore to $KEYSTORE_DEST..."
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_DEST"
+
+          if [ ! -s "$KEYSTORE_DEST" ]; then
+            echo "::error::Decoded keystore at $KEYSTORE_DEST is empty or invalid!"
             exit 1
           fi
+          echo "keystore_path=$KEYSTORE_DEST" >> $GITHUB_OUTPUT
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug --stacktrace
+      - name: Build Release APK
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        env:
+          KEYSTORE_PATH: ${{ steps.setup_keystore.outputs.keystore_path }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Verify and Prepare Release Artifacts
+      - name: Build Debug APK (For CI validation when not releasing)
+        if: !(startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true')
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify and Package Release Artifacts
         id: verify_apk
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        env:
+          EXPECTED_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
         run: |
           set -e
-          APK_SOURCE="app/build/outputs/apk/debug/app-debug.apk"
+          APK_SOURCE="app/build/outputs/apk/release/app-release.apk"
           ARTIFACT_DIR="release-artifacts"
-          TARGET_APK="$ARTIFACT_DIR/app-debug.apk"
-          TARGET_CHECKSUM="$ARTIFACT_DIR/app-debug.apk.sha256"
+          TARGET_APK="$ARTIFACT_DIR/app-release.apk"
 
-          echo "Checking APK existence..."
           if [ ! -s "$APK_SOURCE" ]; then
-            echo "Error: Generated APK does not exist or is empty at $APK_SOURCE" >&2
+            echo "::error::Generated release APK does not exist or is empty at $APK_SOURCE"
             exit 1
           fi
 
@@ -99,70 +116,87 @@ jobs:
           mkdir -p "$ARTIFACT_DIR"
           cp "$APK_SOURCE" "$TARGET_APK"
 
-          echo "Verifying package name..."
           BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+
+          # Verify package name
           if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/aapt2" ]; then
             PKG_NAME=$("$BUILD_TOOLS_DIR/aapt2" dump packagename "$TARGET_APK")
             echo "Detected Package Name: $PKG_NAME"
             if [ "$PKG_NAME" != "com.daf.notenegar" ]; then
-              echo "Error: Unexpected package name $PKG_NAME" >&2
+              echo "::error::Unexpected package name $PKG_NAME"
               exit 1
             fi
+
+            # Verify release manifest is NOT debuggable
+            echo "Checking if release APK is debuggable..."
+            IS_DEBUGGABLE=$("$BUILD_TOOLS_DIR/aapt2" dump xmltree "$TARGET_APK" --file AndroidManifest.xml | grep -i "android:debuggable" | grep -i "0xffffffff" || true)
+            if [ -n "$IS_DEBUGGABLE" ]; then
+              echo "::error::Release APK must NOT have android:debuggable=true!"
+              exit 1
+            fi
+            echo "Manifest verification passed: APK is not debuggable."
           fi
 
-          echo "Verifying APK signature and extracting certificate fingerprints..."
-          EXPECTED_SHA256="ea38639be78d94fecdeccaa1b6c1e4f87aa0f77d0fc8ed5b6e6fdb5dc02f8a1d"
+          # Signature verification
           if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
+            echo "Verifying APK signature..."
             "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$TARGET_APK"
             CERT_INFO=$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$TARGET_APK")
             echo "$CERT_INFO"
 
-            # Robust fingerprint extraction (matches "V2 Signer: certificate SHA-256 digest:", "Signer #1...", etc.)
             RAW_DIGEST=$(echo "$CERT_INFO" | grep -i "SHA-256 digest" | head -n 1 | awk '{print $NF}' | tr -d '[:space:]')
             EXTRACTED_SHA256=$(echo "$RAW_DIGEST" | tr -d ':' | tr '[:upper:]' '[:lower:]')
 
             if [ -z "$EXTRACTED_SHA256" ]; then
-              echo "Error: Could not extract certificate SHA-256 digest from apksigner output!" >&2
+              echo "::error::Could not extract certificate SHA-256 digest from apksigner output!"
               exit 1
             fi
-
             echo "Extracted Certificate SHA-256: $EXTRACTED_SHA256"
-            echo "Expected Certificate SHA-256:  $EXPECTED_SHA256"
 
-            if [ "$EXTRACTED_SHA256" != "$EXPECTED_SHA256" ]; then
-              echo "Error: Certificate fingerprint mismatch! APK signature does not match expected persistent key." >&2
-              echo "Extracted: $EXTRACTED_SHA256" >&2
-              echo "Expected:  $EXPECTED_SHA256" >&2
-              exit 1
+            if [ -n "$EXPECTED_SHA256" ]; then
+              NORM_EXPECTED=$(echo "$EXPECTED_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+              if [ "$EXTRACTED_SHA256" != "$NORM_EXPECTED" ]; then
+                echo "::error::Certificate fingerprint mismatch! Expected: $NORM_EXPECTED, Got: $EXTRACTED_SHA256"
+                exit 1
+              fi
+              echo "Certificate fingerprint matched expected repository variable."
             fi
-            CERT_SHA256="$EXTRACTED_SHA256"
-          else
-            echo "Error: apksigner tool not found in $BUILD_TOOLS_DIR!" >&2
-            exit 1
+            echo "cert_sha256=$EXTRACTED_SHA256" >> $GITHUB_OUTPUT
+            echo "$EXTRACTED_SHA256" > "$ARTIFACT_DIR/certificate-sha256.txt"
           fi
-          echo "Certificate verification passed successfully."
-          echo "$CERT_SHA256" > "$ARTIFACT_DIR/certificate-sha256.txt"
-          echo "cert_sha256=$CERT_SHA256" >> $GITHUB_OUTPUT
 
           echo "Calculating SHA-256 checksum..."
           cd "$ARTIFACT_DIR"
-          sha256sum app-debug.apk > app-debug.apk.sha256
+          sha256sum app-release.apk > app-release.apk.sha256
           cd - > /dev/null
 
-          echo "Generated SHA-256 Checksum:"
-          cat "$TARGET_CHECKSUM"
+      - name: Cleanup Decoded Keystore
+        if: always()
+        run: |
+          if [ -n "${{ steps.setup_keystore.outputs.keystore_path }}" ] && [ -f "${{ steps.setup_keystore.outputs.keystore_path }}" ]; then
+            rm -f "${{ steps.setup_keystore.outputs.keystore_path }}"
+            echo "Scrubbed decoded keystore from runner temp."
+          fi
 
-      - name: Publish GitHub Release
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-artifacts
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+            release-artifacts/
+          if-no-files-found: ignore
+
+      - name: Publish GitHub Release (Tags / Manual Release only)
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}.${{ github.run_attempt }}
-          name: "Release v${{ github.run_number }}.${{ github.run_attempt }}"
+          name: "Release ${{ github.ref_name }}"
           body: |
-            ### Automated Debug Build
+            ### Official Release — Daf Note App
             - **Commit:** `${{ github.sha }}`
-            - **Branch:** `${{ github.ref_name }}`
-            - **Build Run:** `${{ github.run_number }}` (Attempt `${{ github.run_attempt }}`)
-            - **Direct Download Link:** `https://github.com/${{ github.repository }}/releases/latest/download/app-debug.apk`
+            - **Branch/Tag:** `${{ github.ref_name }}`
 
             #### Signing Certificate Fingerprint (SHA-256)
             ```
@@ -171,14 +205,13 @@ jobs:
 
             #### APK SHA-256 Checksum
             ```
-            ${{ hashFiles('release-artifacts/app-debug.apk') }}  app-debug.apk
+            ${{ hashFiles('release-artifacts/app-release.apk') }}  app-release.apk
             ```
           files: |
-            release-artifacts/app-debug.apk
-            release-artifacts/app-debug.apk.sha256
+            release-artifacts/app-release.apk
+            release-artifacts/app-release.apk.sha256
             release-artifacts/certificate-sha256.txt
           make_latest: true
-          generate_release_notes: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          

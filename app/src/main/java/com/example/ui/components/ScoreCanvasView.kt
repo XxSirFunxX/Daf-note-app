@@ -54,12 +54,14 @@ fun ScoreCanvasView(
     panOffsetY: Float,
     onZoomAndPanChange: (Float, Float, Float) -> Unit,
     onCanvasTap: (Float, Float) -> Unit,
+    onSymbolDragStarted: () -> Unit = {},
     onSymbolDrag: (Float, Float) -> Unit,
     onSymbolDragFinished: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
 
+    val currentPage by rememberUpdatedState(page)
     val currentZoomScale by rememberUpdatedState(zoomScale)
     val currentPanOffsetX by rememberUpdatedState(panOffsetX)
     val currentPanOffsetY by rememberUpdatedState(panOffsetY)
@@ -68,6 +70,7 @@ fun ScoreCanvasView(
     val currentActiveCustomSymbol by rememberUpdatedState(activeCustomSymbol)
     val currentOnZoomAndPanChange by rememberUpdatedState(onZoomAndPanChange)
     val currentOnCanvasTap by rememberUpdatedState(onCanvasTap)
+    val currentOnSymbolDragStarted by rememberUpdatedState(onSymbolDragStarted)
     val currentOnSymbolDrag by rememberUpdatedState(onSymbolDrag)
     val currentOnSymbolDragFinished by rememberUpdatedState(onSymbolDragFinished)
 
@@ -122,8 +125,8 @@ fun ScoreCanvasView(
                         )
 
                         // Check if down was on a selected symbol or any symbol on page (taking rotation into account)
-                        val hitSymbol = page.symbols.lastOrNull { sym ->
-                            val (hw, hh) = sym.getVisualBounds(page.lineSpacing)
+                        val hitSymbol = currentPage.symbols.lastOrNull { sym ->
+                            val (hw, hh) = sym.getVisualBounds(currentPage.lineSpacing)
                             if (sym.rotation != 0f) {
                                 val dx = (downLogicalX - sym.x).toDouble()
                                 val dy = (downLogicalY - sym.y).toDouble()
@@ -142,7 +145,7 @@ fun ScoreCanvasView(
 
                         var isTransforming = false
                         var isDragging = false
-                        val isSymbolDrag = (hitSymbol != null || currentSelectedSymbolIds.isNotEmpty()) &&
+                        val isSymbolDrag = hitSymbol != null &&
                                            currentActivePaletteSymbol == null && currentActiveCustomSymbol == null
 
                         var prevCentroid = downPos
@@ -245,7 +248,15 @@ fun ScoreCanvasView(
                                 totalDragDistance += dragDelta.getDistance()
 
                                 if (totalDragDistance > 12f) {
-                                    isDragging = true
+                                    if (!isDragging) {
+                                        isDragging = true
+                                        if (isSymbolDrag && !isTransforming) {
+                                            if (hitSymbol != null && !currentSelectedSymbolIds.contains(hitSymbol.id)) {
+                                                currentOnCanvasTap(downLogicalX, downLogicalY)
+                                            }
+                                            currentOnSymbolDragStarted()
+                                        }
+                                    }
                                     change.consume()
 
                                     if (isSymbolDrag && !isTransforming) {

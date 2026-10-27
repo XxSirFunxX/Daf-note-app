@@ -119,7 +119,7 @@ object CustomSymbolImageHelper {
         return null
     }
 
-    private fun isSvgContent(bytes: ByteArray): Boolean {
+    fun isSvgContent(bytes: ByteArray): Boolean {
         val sampleLen = minOf(bytes.size, 512)
         val sample = String(bytes, 0, sampleLen, Charsets.UTF_8).trim().lowercase()
         return sample.startsWith("<svg") ||

@@ -458,4 +458,31 @@ class ExampleUnitTest {
         assertEquals("۲ (میانه)", line2)
         assertEquals("۱ (تُم)", line1)
     }
+
+    @Test
+    fun testSanitizeFileName() {
+        val unsafe = "قطعه / تست : ویژه * \" < > | ? .dafnt"
+        val clean = com.example.io.ScoreExporter.sanitizeFileName(unsafe)
+        assertFalse(clean.contains("/"))
+        assertFalse(clean.contains(":"))
+        assertFalse(clean.contains("*"))
+        assertFalse(clean.contains("?"))
+        assertFalse(clean.contains("\""))
+        assertFalse(clean.contains("<"))
+        assertFalse(clean.contains(">"))
+        assertFalse(clean.contains("|"))
+    }
+
+    @Test
+    fun testVisualBoundsConsistency() {
+        val sym = ScoreSymbol(
+            type = SymbolType.NOTE_QUARTER,
+            x = 100f,
+            y = 100f,
+            scale = 1.0f
+        )
+        val (hw, hh) = sym.getVisualBounds(16f)
+        assertEquals(16f, hw, 0.01f)
+        assertEquals(22f, hh, 0.01f)
+    }
 }

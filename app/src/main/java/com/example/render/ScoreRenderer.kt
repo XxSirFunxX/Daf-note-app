@@ -83,6 +83,30 @@ object ScoreRenderer {
         isFilterBitmap = true
     }
 
+    private val badgeTextPaint = Paint(textNumberPaint).apply { textSize = 18f }
+
+    private val footerPaint = Paint(textSubtitlePaint).apply {
+        textSize = 14f
+        textAlign = Paint.Align.CENTER
+    }
+
+    private val guideTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B0A69A")
+        textSize = 10f
+        textAlign = Paint.Align.RIGHT
+    }
+
+    private val barSinglePaint = Paint(inkStrokePaint).apply { strokeWidth = 2f }
+    private val barDoublePaint = Paint(inkStrokePaint).apply { strokeWidth = 1.8f }
+    private val barFinalThinPaint = Paint(inkStrokePaint).apply { strokeWidth = 1.8f }
+    private val barFinalThickPaint = Paint(inkStrokePaint).apply { strokeWidth = 4.8f }
+
+    private val timeSignatureNumPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#1C1A18")
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+
     /**
      * Renders the complete score page onto any standard Android Canvas.
      */
@@ -116,7 +140,6 @@ object ScoreRenderer {
             val badgeY = page.marginTop * 0.5f
             val badgeRadius = 18f
             canvas.drawCircle(badgeX, badgeY, badgeRadius, inkStrokePaint)
-            val badgeTextPaint = Paint(textNumberPaint).apply { textSize = 18f }
             canvas.drawText(page.lessonNumber, badgeX, badgeY + 6f, badgeTextPaint)
         }
 
@@ -137,10 +160,6 @@ object ScoreRenderer {
         }
 
         // 5. Page Number Footer
-        val footerPaint = Paint(textSubtitlePaint).apply {
-            textSize = 14f
-            textAlign = Paint.Align.CENTER
-        }
         val footerText = "صفحه ${page.pageNumber}"
         canvas.drawText(footerText, width / 2f, height - (page.marginBottom * 0.35f), footerPaint)
     }
@@ -182,22 +201,17 @@ object ScoreRenderer {
         canvas.drawLine(staff.right, staff.line4Y, staff.right, staff.line1Y, staffPaint)
 
         if (showGuides) {
-            val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#B0A69A")
-                textSize = 10f
-                textAlign = Paint.Align.RIGHT
-            }
             if (line4GuideText.isNotBlank()) {
-                canvas.drawText(line4GuideText, staff.left - 8f, staff.line4Y + 3f, guidePaint)
+                canvas.drawText(line4GuideText, staff.left - 8f, staff.line4Y + 3f, guideTextPaint)
             }
             if (line3GuideText.isNotBlank()) {
-                canvas.drawText(line3GuideText, staff.left - 8f, staff.line3Y + 3f, guidePaint)
+                canvas.drawText(line3GuideText, staff.left - 8f, staff.line3Y + 3f, guideTextPaint)
             }
             if (line2GuideText.isNotBlank()) {
-                canvas.drawText(line2GuideText, staff.left - 8f, staff.line2Y + 3f, guidePaint)
+                canvas.drawText(line2GuideText, staff.left - 8f, staff.line2Y + 3f, guideTextPaint)
             }
             if (line1GuideText.isNotBlank()) {
-                canvas.drawText(line1GuideText, staff.left - 8f, staff.line1Y + 3f, guidePaint)
+                canvas.drawText(line1GuideText, staff.left - 8f, staff.line1Y + 3f, guideTextPaint)
             }
         }
     }
@@ -211,12 +225,22 @@ object ScoreRenderer {
         val scale = symbol.scale * (baseSpacing / 16f)
         canvas.scale(scale, scale)
 
-        // If symbol has a custom image path or is a custom symbol, render image
-        if (!symbol.imagePath.isNullOrBlank() || symbol.type == SymbolType.CUSTOM_SYMBOL) {
-            drawCustomSymbol(canvas, symbol)
-            canvas.restore()
-            return
+        val originalFill = inkFillPaint.color
+        val originalStroke = inkStrokePaint.color
+        val customColor = try {
+            Color.parseColor(symbol.colorHex)
+        } catch (e: Exception) {
+            originalFill
         }
+        inkFillPaint.color = customColor
+        inkStrokePaint.color = customColor
+
+        try {
+            // If symbol has a custom image path or is a custom symbol, render image
+            if (!symbol.imagePath.isNullOrBlank() || symbol.type == SymbolType.CUSTOM_SYMBOL) {
+                drawCustomSymbol(canvas, symbol)
+                return
+            }
 
         when (symbol.type) {
             // Notes
@@ -287,8 +311,11 @@ object ScoreRenderer {
             // Custom
             SymbolType.CUSTOM_SYMBOL -> drawCustomSymbol(canvas, symbol)
         }
-
-        canvas.restore()
+        } finally {
+            inkFillPaint.color = originalFill
+            inkStrokePaint.color = originalStroke
+            canvas.restore()
+        }
     }
 
     private fun drawSelectionHighlight(canvas: Canvas, symbol: ScoreSymbol, baseSpacing: Float) {

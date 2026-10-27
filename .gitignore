@@ -16,3 +16,10 @@
 local.properties
 .env
 debug.keystore
+debug.keystore.base64
+app/debug.keystore.base64
+*.jks
+*.keystore
+*.p12
+*.base64
+my-upload-key.jks

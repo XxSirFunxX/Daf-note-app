@@ -30,13 +30,20 @@ data class ImportResult<T>(
 
 object ScoreImporter {
 
+    const val MAX_IMPORT_SIZE_BYTES = 20 * 1024 * 1024 // 20 MB
+    const val MAX_IMPORT_PAGES = 500
+
     /**
      * Reads and parses a project from a SAF content Uri or File Uri.
      */
     fun readProjectFromUri(context: Context, uri: Uri): ImportResult<ScoreProject> {
         return try {
             val content = context.contentResolver.openInputStream(uri)?.use { stream ->
-                stream.bufferedReader(Charsets.UTF_8).readText()
+                val bytes = stream.readBytes()
+                if (bytes.size > MAX_IMPORT_SIZE_BYTES) {
+                    return ImportResult(null, false, "حجم فایل بیش از حد مجاز (۲۰ مگابایت) است.")
+                }
+                String(bytes, Charsets.UTF_8)
             } ?: return ImportResult(null, false, "خطا در خواندن فایل از مسیر انتخاب‌شده")
 
             val trimmed = content.trimStart()
@@ -48,7 +55,7 @@ object ScoreImporter {
             if (isXml) {
                 parseMusicXml(content)
             } else if (isJson) {
-                parseProjectJson(content)
+                parseProjectJson(content, context = context, generateNewId = true)
             } else {
                 ImportResult(null, false, "فرمت فایل ناشناخته است. لطفاً فایل معتبر .dafnt یا MusicXML انتخاب کنید.")
             }
@@ -60,11 +67,18 @@ object ScoreImporter {
     /**
      * Parses native project JSON (.dafnt or legacy .chaharkhat) into a ScoreProject.
      */
-    fun parseProjectJson(jsonString: String): ImportResult<ScoreProject> {
+    fun parseProjectJson(
+        jsonString: String,
+        context: Context? = null,
+        generateNewId: Boolean = false
+    ): ImportResult<ScoreProject> {
         return try {
+            if (jsonString.length > MAX_IMPORT_SIZE_BYTES) {
+                return ImportResult(null, false, "حجم محتوای پروژه بیش از حد مجاز (۲۰ مگابایت) است.")
+            }
             val root = JSONObject(jsonString)
             val version = root.optInt("version", 1)
-            val id = root.optString("id", java.util.UUID.randomUUID().toString())
+            val id = if (generateNewId) java.util.UUID.randomUUID().toString() else root.optString("id", java.util.UUID.randomUUID().toString())
             val title = root.optString("title", "پروژه وارد شده")
             val author = root.optString("author", "هنرمند")
             val createdAt = root.optLong("createdAt", System.currentTimeMillis())
@@ -74,6 +88,9 @@ object ScoreImporter {
             val activePageIndex = root.optInt("activePageIndex", 0)
 
             val pagesArray = root.getJSONArray("pages")
+            if (pagesArray.length() > MAX_IMPORT_PAGES) {
+                return ImportResult(null, false, "تعداد صفحات پروژه (${pagesArray.length()}) بیش از حد مجاز ($MAX_IMPORT_PAGES صفحه) است.")
+            }
             val pagesList = mutableListOf<ScorePage>()
 
             for (i in 0 until pagesArray.length()) {
@@ -92,6 +109,30 @@ object ScoreImporter {
                         val catName = symObj.optString("category", symType.defaultCategory.name)
                         val category = try { SymbolCategory.valueOf(catName) } catch (e: Exception) { symType.defaultCategory }
 
+                        var finalImagePath = symObj.optString("imagePath").ifEmpty { null }
+                        val imageBase64 = symObj.optString("imageBase64")
+
+                        // Safely extract embedded Base64 image if available
+                        if (context != null && imageBase64.isNotBlank()) {
+                            try {
+                                val bytes = android.util.Base64.decode(imageBase64, android.util.Base64.DEFAULT)
+                                if (bytes.isNotEmpty() && bytes.size <= 5 * 1024 * 1024) {
+                                    val symbolsDir = java.io.File(context.filesDir, "symbols").apply { mkdirs() }
+                                    val isSvg = com.example.util.CustomSymbolImageHelper.isSvgContent(bytes)
+                                    val ext = if (isSvg) "svg" else "png"
+                                    val safeFileName = "sym_${java.util.UUID.randomUUID()}.$ext"
+                                    val targetFile = java.io.File(symbolsDir, safeFileName)
+                                    // Path traversal prevention
+                                    if (targetFile.canonicalPath.startsWith(symbolsDir.canonicalPath)) {
+                                        targetFile.writeBytes(bytes)
+                                        finalImagePath = targetFile.absolutePath
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+
                         symbolList.add(
                             ScoreSymbol(
                                 id = symObj.optString("id", java.util.UUID.randomUUID().toString()),
@@ -107,7 +148,7 @@ object ScoreImporter {
                                 textValue = symObj.optString("textValue").ifEmpty { null },
                                 customData = symObj.optString("customData").ifEmpty { null },
                                 colorHex = symObj.optString("colorHex", "#1E1C1A"),
-                                imagePath = symObj.optString("imagePath").ifEmpty { null },
+                                imagePath = finalImagePath,
                                 durationValue = symObj.optString("durationValue").ifEmpty { null }
                             )
                         )

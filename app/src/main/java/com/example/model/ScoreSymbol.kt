@@ -23,7 +23,7 @@ data class ScoreSymbol(
      * Approximate bounding box half-width and half-height for hit-testing and selection box.
      */
     fun getVisualBounds(baseSpacing: Float): Pair<Float, Float> {
-        val s = scale * (baseSpacing / 14f)
+        val s = scale * (baseSpacing / 16f)
         if (type == SymbolType.TEXT_ANNOTATION) {
             val text = textValue ?: name
             val lines = text.split("\n")
@@ -33,14 +33,14 @@ data class ScoreSymbol(
             return hw to hh
         }
         return when (category) {
-            SymbolCategory.BAR_LINES -> (10f * s) to (baseSpacing * 3.8f)
-            SymbolCategory.TIME_SIGNATURES -> (22f * s) to (baseSpacing * 2.8f)
-            SymbolCategory.NOTES -> (18f * s) to (24f * s)
-            SymbolCategory.RESTS -> (16f * s) to (22f * s)
-            SymbolCategory.RING_SOUNDS -> (18f * s) to (18f * s)
+            SymbolCategory.BAR_LINES -> (10f * s) to (baseSpacing * 2.0f * s)
+            SymbolCategory.TIME_SIGNATURES -> (16f * s) to (baseSpacing * 1.5f * s)
+            SymbolCategory.NOTES -> (16f * s) to (22f * s)
+            SymbolCategory.RESTS -> (14f * s) to (20f * s)
+            SymbolCategory.RING_SOUNDS -> (16f * s) to (16f * s)
             SymbolCategory.TECHNIQUES -> (14f * s) to (14f * s)
-            SymbolCategory.TEMPO_TEXT -> (36f * s) to (16f * s)
-            SymbolCategory.CUSTOM -> (24f * s) to (24f * s)
+            SymbolCategory.TEMPO_TEXT -> (32f * s) to (16f * s)
+            SymbolCategory.CUSTOM -> (16f * s) to (16f * s)
         }
     }
 }

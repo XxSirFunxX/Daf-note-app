@@ -72,7 +72,20 @@ object ScoreExporter {
                 symObj.put("textValue", sym.textValue ?: "")
                 symObj.put("customData", sym.customData ?: "")
                 symObj.put("colorHex", sym.colorHex)
-                symObj.put("imagePath", sym.imagePath ?: "")
+                val imgPath = sym.imagePath
+                symObj.put("imagePath", imgPath ?: "")
+                if (!imgPath.isNullOrBlank()) {
+                    try {
+                        val imgFile = File(imgPath)
+                        if (imgFile.exists() && imgFile.isFile && imgFile.length() <= 5 * 1024 * 1024) {
+                            val bytes = imgFile.readBytes()
+                            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                            symObj.put("imageBase64", b64)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
                 symObj.put("durationValue", sym.durationValue ?: "")
                 symbolsArray.put(symObj)
             }
@@ -84,12 +97,40 @@ object ScoreExporter {
         return root.toString(2)
     }
 
+    fun sanitizeFileName(rawName: String, fallback: String = "daf_score"): String {
+        val sanitized = rawName
+            .replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_")
+            .replace(Regex("\\s+"), "_")
+            .trim('.', '_', ' ')
+            .take(64)
+        return if (sanitized.isBlank()) fallback else sanitized
+    }
+
+    fun cleanupOldExports(context: Context) {
+        try {
+            val exportDir = File(context.cacheDir, "exports")
+            if (exportDir.exists() && exportDir.isDirectory) {
+                val now = System.currentTimeMillis()
+                val oneDayMs = 24 * 60 * 60 * 1000L
+                exportDir.listFiles()?.forEach { file ->
+                    if (now - file.lastModified() > oneDayMs) {
+                        file.delete()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     /**
      * Exports the project as a downloadable .dafnt file in cache.
      */
     fun exportProjectFile(context: Context, project: ScoreProject): File {
+        cleanupOldExports(context)
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val fileName = "${project.title.replace(" ", "_")}.$EXTENSION_DAFNT"
+        val safeTitle = sanitizeFileName(project.title, "daf_project")
+        val fileName = "$safeTitle.$EXTENSION_DAFNT"
         val file = File(exportDir, fileName)
         file.writeText(projectToJson(project))
         return file
@@ -115,50 +156,53 @@ object ScoreExporter {
      * Exports all pages of a project to a standard multi-page PDF document in cache.
      */
     fun exportToPdf(context: Context, project: ScoreProject): File {
+        cleanupOldExports(context)
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val fileName = "score_${project.title.replace(" ", "_")}_${System.currentTimeMillis()}.pdf"
+        val safeTitle = sanitizeFileName(project.title, "daf_score")
+        val fileName = "score_${safeTitle}_${System.currentTimeMillis()}.pdf"
         val pdfFile = File(exportDir, fileName)
 
         val document = PdfDocument()
+        try {
+            for ((index, page) in project.pages.withIndex()) {
+                val pdfWidth = page.paperSize.pdfWidthPt
+                val pdfHeight = page.paperSize.pdfHeightPt
 
-        for ((index, page) in project.pages.withIndex()) {
-            val pdfWidth = page.paperSize.pdfWidthPt
-            val pdfHeight = page.paperSize.pdfHeightPt
+                val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, index + 1).create()
+                val pdfPage = document.startPage(pageInfo)
 
-            val pageInfo = PdfDocument.PageInfo.Builder(pdfWidth, pdfHeight, index + 1).create()
-            val pdfPage = document.startPage(pageInfo)
+                val scaleX = pdfWidth.toFloat() / page.paperSize.widthPt
+                val scaleY = pdfHeight.toFloat() / page.paperSize.heightPt
+                pdfPage.canvas.save()
+                pdfPage.canvas.scale(scaleX, scaleY)
 
-            val scaleX = pdfWidth.toFloat() / page.paperSize.widthPt
-            val scaleY = pdfHeight.toFloat() / page.paperSize.heightPt
-            pdfPage.canvas.save()
-            pdfPage.canvas.scale(scaleX, scaleY)
+                ScoreRenderer.drawPage(
+                    canvas = pdfPage.canvas,
+                    page = page,
+                    selectedSymbolIds = emptySet(),
+                    showGuides = false,
+                    highlightLine4 = false
+                )
+                pdfPage.canvas.restore()
 
-            ScoreRenderer.drawPage(
-                canvas = pdfPage.canvas,
-                page = page,
-                selectedSymbolIds = emptySet(),
-                showGuides = false,
-                highlightLine4 = false
-            )
-            pdfPage.canvas.restore()
+                document.finishPage(pdfPage)
+            }
 
-            document.finishPage(pdfPage)
+            FileOutputStream(pdfFile).use { out ->
+                document.writeTo(out)
+            }
+            return pdfFile
+        } finally {
+            document.close()
         }
-
-        FileOutputStream(pdfFile).use { out ->
-            document.writeTo(out)
-        }
-        document.close()
-
-        return pdfFile
     }
 
     /**
      * Writes PDF directly to a user-selected destination URI.
      */
     fun writePdfToUri(context: Context, uri: Uri, project: ScoreProject): Boolean {
+        val document = PdfDocument()
         return try {
-            val document = PdfDocument()
             for ((index, page) in project.pages.withIndex()) {
                 val pdfWidth = page.paperSize.pdfWidthPt
                 val pdfHeight = page.paperSize.pdfHeightPt
@@ -186,11 +230,12 @@ object ScoreExporter {
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 document.writeTo(out)
             }
-            document.close()
             true
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        } finally {
+            document.close()
         }
     }
 
@@ -207,10 +252,28 @@ object ScoreExporter {
         isPng: Boolean,
         scale: Float = HIGH_RES_EXPORT_SCALE
     ): Bitmap {
-        val width = (page.paperSize.widthPt * scale).toInt().coerceAtLeast(1)
-        val height = (page.paperSize.heightPt * scale).toInt().coerceAtLeast(1)
+        val maxPixels = 16_000_000L
+        val rawW = page.paperSize.widthPt * scale
+        val rawH = page.paperSize.heightPt * scale
+        val totalPixels = rawW.toLong() * rawH.toLong()
+        val effectiveScale = if (totalPixels > maxPixels) {
+            val factor = kotlin.math.sqrt(maxPixels.toDouble() / totalPixels.toDouble()).toFloat()
+            (scale * factor).coerceAtLeast(1.0f)
+        } else {
+            scale
+        }
 
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val width = (page.paperSize.widthPt * effectiveScale).toInt().coerceAtLeast(1)
+        val height = (page.paperSize.heightPt * effectiveScale).toInt().coerceAtLeast(1)
+
+        val (bitmap, actualScale) = try {
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) to effectiveScale
+        } catch (oom: OutOfMemoryError) {
+            // Fallback to standard resolution (1.0f)
+            val fallbackW = page.paperSize.widthPt.toInt().coerceAtLeast(1)
+            val fallbackH = page.paperSize.heightPt.toInt().coerceAtLeast(1)
+            Bitmap.createBitmap(fallbackW, fallbackH, Bitmap.Config.ARGB_8888) to 1.0f
+        }
         val canvas = Canvas(bitmap)
 
         // For JPG, replace transparent backdrop with solid white
@@ -219,7 +282,7 @@ object ScoreExporter {
         }
 
         canvas.save()
-        canvas.scale(scale, scale)
+        canvas.scale(actualScale, actualScale)
 
         ScoreRenderer.drawPage(
             canvas = canvas,
@@ -243,6 +306,7 @@ object ScoreExporter {
         quality: Int = if (isPng) 100 else DEFAULT_JPG_QUALITY,
         scale: Float = HIGH_RES_EXPORT_SCALE
     ): File {
+        cleanupOldExports(context)
         val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
         val ext = if (isPng) "png" else "jpg"
         val fileName = "page_${page.pageNumber}_${System.currentTimeMillis()}.$ext"
