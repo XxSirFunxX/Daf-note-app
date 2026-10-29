@@ -1,6 +1,6 @@
 {
-  "summary":  "برنامه عملیاتی نهایی برای رفع قطعی مشکل ناسازگاری امضای دیجیتال (INSTALL_FAILED_UPDATE_INCOMPATIBLE). تثبیت دائمی منبع امضا روی debug.keystore.base64 در مخزن، حذف هرگونه تولید کلید موقت در GitHub Actions، اضافه کردن اعتبارسنجی با apksigner و چاپ اثرانگشت گواهی در بدنه ریلیز، و راهنمای نصب نسخه دائمی.",
-  "updatedAt":  "2026-10-24T08:26:52.661451199Z",
+  "summary":  "برنامه عملیاتی برای انتشار خودکار GitHub Release با هر بار Push روی برنچ main",
+  "updatedAt":  "2026-10-29T13:01:54.413922410Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
