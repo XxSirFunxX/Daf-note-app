@@ -14,13 +14,20 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish as GitHub Release'
+        description: 'Publish as GitHub Release (Only active when ENABLE_RELEASE_PUBLISHING is true)'
         required: false
         type: boolean
         default: false
 
 permissions:
   contents: write
+
+env:
+  # Master switch for Release builds and GitHub Releases.
+  # Set to 'true' only when release signing secrets (RELEASE_KEYSTORE_BASE64,
+  # STORE_PASSWORD, KEY_PASSWORD) are configured in GitHub Secrets.
+  # Defaults to 'false' so that release publishing is completely disabled.
+  ENABLE_RELEASE_PUBLISHING: ${{ vars.ENABLE_RELEASE_PUBLISHING || 'false' }}
 
 jobs:
   build-and-test:
@@ -54,9 +61,89 @@ jobs:
           path: app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: ignore
 
+      # =======================================================================
+      # DEBUG BUILD PIPELINE (Default CI path - completely independent of release secrets)
+      # =======================================================================
+
+      - name: Setup Debug Keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          if [ -f "debug.keystore" ]; then
+            echo "Existing debug.keystore found in workspace."
+          elif [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "Restoring persistent debug keystore from GitHub Secret DEBUG_KEYSTORE_BASE64..."
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          elif [ -f "debug.keystore.base64" ]; then
+            echo "Restoring persistent debug keystore from repository file debug.keystore.base64..."
+            base64 --decode debug.keystore.base64 > debug.keystore
+          elif [ -f "app/debug.keystore.base64" ]; then
+            echo "Restoring persistent debug keystore from app/debug.keystore.base64..."
+            base64 --decode app/debug.keystore.base64 > debug.keystore
+          else
+            echo "::warning::No persistent debug keystore found! (DEBUG_KEYSTORE_BASE64 secret is not set)."
+            echo "::warning::Generating an ephemeral debug keystore for this build. Note: APKs signed with ephemeral keys cannot be installed over previous versions."
+            keytool -genkey -v -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          if [ ! -s "debug.keystore" ]; then
+            echo "::error::debug.keystore is empty or missing!"
+            exit 1
+          fi
+
+      - name: Build Debug APK
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Verify Debug APK Signature
+        id: verify_debug_apk
+        run: |
+          set -e
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -s "$DEBUG_APK" ]; then
+            echo "::error::Debug APK not found at $DEBUG_APK"
+            exit 1
+          fi
+
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS_DIR=$(ls -d "$SDK_ROOT"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+          APKSIGNER_BIN=""
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ]; then
+            APKSIGNER_BIN="$BUILD_TOOLS_DIR/apksigner"
+          elif command -v apksigner >/dev/null 2>&1; then
+            APKSIGNER_BIN="$(command -v apksigner)"
+          fi
+
+          if [ -n "$APKSIGNER_BIN" ]; then
+            echo "Verifying debug APK signature..."
+            CERT_INFO=$("$APKSIGNER_BIN" verify --print-certs "$DEBUG_APK" 2>&1 || true)
+            SHA256_FINGERPRINT=$(echo "$CERT_INFO" | grep -i "SHA-256 digest" | head -n 1 | awk '{print $NF}' | tr -d '[:space:]' || true)
+            echo "Debug APK Certificate SHA-256: $SHA256_FINGERPRINT"
+            echo "debug_cert_sha256=$SHA256_FINGERPRINT" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      # =======================================================================
+      # RELEASE BUILD PIPELINE (Disabled until ENABLE_RELEASE_PUBLISHING is true)
+      # =======================================================================
+
       - name: Setup Release Keystore
         id: setup_keystore
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -64,38 +151,27 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           set -e
-          KEYSTORE_DEST="$RUNNER_TEMP/release.keystore"
-
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "Using configured GitHub Secrets for release signing..."
-            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_DEST"
-            echo "store_password=$STORE_PASSWORD" >> $GITHUB_OUTPUT
-            echo "key_password=$KEY_PASSWORD" >> $GITHUB_OUTPUT
-            echo "key_alias=${KEY_ALIAS:-upload}" >> $GITHUB_OUTPUT
-          else
-            echo "::warning::RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, or KEY_PASSWORD not found in GitHub Secrets."
-            echo "Generating fallback upload keystore so automated release build succeeds..."
-            keytool -genkey -v -keystore "$KEYSTORE_DEST" \
-              -storepass android \
-              -alias upload \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Daf Note App,O=Daf Note,C=US"
-            echo "store_password=android" >> $GITHUB_OUTPUT
-            echo "key_password=android" >> $GITHUB_OUTPUT
-            echo "key_alias=upload" >> $GITHUB_OUTPUT
+          echo "Validating release signing credentials..."
+          if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Missing required release signing secrets! RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD must be configured in GitHub Repository Secrets."
+            exit 1
           fi
+
+          KEYSTORE_DEST="$RUNNER_TEMP/release.keystore"
+          echo "Decoding release keystore to $KEYSTORE_DEST..."
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_DEST"
 
           if [ ! -s "$KEYSTORE_DEST" ]; then
             echo "::error::Decoded keystore at $KEYSTORE_DEST is empty or invalid!"
             exit 1
           fi
           echo "keystore_path=$KEYSTORE_DEST" >> $GITHUB_OUTPUT
+          echo "store_password=$STORE_PASSWORD" >> $GITHUB_OUTPUT
+          echo "key_password=$KEY_PASSWORD" >> $GITHUB_OUTPUT
+          echo "key_alias=${KEY_ALIAS:-upload}" >> $GITHUB_OUTPUT
 
       - name: Build Release APK
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         env:
           KEYSTORE_PATH: ${{ steps.setup_keystore.outputs.keystore_path }}
           STORE_PASSWORD: ${{ steps.setup_keystore.outputs.store_password }}
@@ -104,42 +180,9 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Setup Debug Keystore
-        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.publish_release != true && github.event.inputs.publish_release != 'true') }}
-        env:
-          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-        run: |
-          if [ ! -f "debug.keystore" ]; then
-            if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
-              echo "Restoring debug keystore from GitHub Secret DEBUG_KEYSTORE_BASE64..."
-              printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
-            elif [ -f "debug.keystore.base64" ]; then
-              echo "Restoring debug keystore from repository file debug.keystore.base64..."
-              base64 --decode debug.keystore.base64 > debug.keystore
-            elif [ -f "app/debug.keystore.base64" ]; then
-              echo "Restoring debug keystore from app/debug.keystore.base64..."
-              base64 --decode app/debug.keystore.base64 > debug.keystore
-            else
-              echo "Generating standard debug keystore for CI..."
-              keytool -genkey -v -keystore debug.keystore \
-                -storepass android \
-                -alias androiddebugkey \
-                -keypass android \
-                -keyalg RSA \
-                -keysize 2048 \
-                -validity 10000 \
-                -dname "CN=Android Debug,O=Android,C=US"
-            fi
-          fi
-
-      - name: Build Debug APK (For CI validation on PRs)
-        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.publish_release != true && github.event.inputs.publish_release != 'true') }}
-        run: |
-          ./gradlew :app:assembleDebug --stacktrace
-
       - name: Verify and Package Release Artifacts
         id: verify_apk
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         env:
           EXPECTED_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
         run: |
@@ -240,22 +283,22 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PATH" ]; then
             rm -f "$KEYSTORE_PATH"
-            echo "Scrubbed decoded keystore from runner temp."
+            echo "Scrubbed decoded release keystore from runner temp."
           fi
 
-      - name: Upload Build Artifacts
+      - name: Upload Release Artifacts
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         uses: actions/upload-artifact@v4
         with:
-          name: apk-artifacts
+          name: release-apk-artifacts
           path: |
             app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/debug/*.apk
             release-artifacts/
           if-no-files-found: ignore
 
       - name: Determine Release Tag and Title
         id: release_meta
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${{ github.ref_name }}"
@@ -268,7 +311,7 @@ jobs:
           echo "release_title=$TITLE" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
+        if: ${{ (vars.ENABLE_RELEASE_PUBLISHING == 'true' || env.ENABLE_RELEASE_PUBLISHING == 'true') && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true'))) }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_meta.outputs.tag_name }}
