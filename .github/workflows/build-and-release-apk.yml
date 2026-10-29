@@ -56,7 +56,7 @@ jobs:
 
       - name: Setup Release Keystore
         id: setup_keystore
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -80,7 +80,7 @@ jobs:
           echo "keystore_path=$KEYSTORE_DEST" >> $GITHUB_OUTPUT
 
       - name: Build Release APK
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
         env:
           KEYSTORE_PATH: ${{ steps.setup_keystore.outputs.keystore_path }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -89,13 +89,14 @@ jobs:
         run: |
           ./gradlew :app:assembleRelease --stacktrace
 
-            - name: Build Debug APK (For CI validation when not releasing)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event.inputs.publish_release != 'true' }}
+      - name: Build Debug APK (For CI validation when not releasing)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || (inputs.publish_release != true && github.event.inputs.publish_release != 'true')) }}
         run: |
           ./gradlew :app:assembleDebug --stacktrace
+
       - name: Verify and Package Release Artifacts
         id: verify_apk
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
         env:
           EXPECTED_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
         run: |
@@ -115,32 +116,49 @@ jobs:
           mkdir -p "$ARTIFACT_DIR"
           cp "$APK_SOURCE" "$TARGET_APK"
 
-          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS_DIR=$(ls -d "$SDK_ROOT"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)
+
+          AAPT2_BIN=""
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -x "$BUILD_TOOLS_DIR/aapt2" ]; then
+            AAPT2_BIN="$BUILD_TOOLS_DIR/aapt2"
+          elif command -v aapt2 >/dev/null 2>&1; then
+            AAPT2_BIN="$(command -v aapt2)"
+          fi
+
+          APKSIGNER_BIN=""
+          if [ -n "$BUILD_TOOLS_DIR" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ]; then
+            APKSIGNER_BIN="$BUILD_TOOLS_DIR/apksigner"
+          elif command -v apksigner >/dev/null 2>&1; then
+            APKSIGNER_BIN="$(command -v apksigner)"
+          fi
 
           # Verify package name
-          if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/aapt2" ]; then
-            PKG_NAME=$("$BUILD_TOOLS_DIR/aapt2" dump packagename "$TARGET_APK")
+          if [ -n "$AAPT2_BIN" ]; then
+            PKG_NAME=$("$AAPT2_BIN" dump packagename "$TARGET_APK")
             echo "Detected Package Name: $PKG_NAME"
             if [ "$PKG_NAME" != "com.daf.notenegar" ]; then
-              echo "::error::Unexpected package name $PKG_NAME"
+              echo "::error::Unexpected package name $PKG_NAME (expected com.daf.notenegar)"
               exit 1
             fi
 
             # Verify release manifest is NOT debuggable
             echo "Checking if release APK is debuggable..."
-            IS_DEBUGGABLE=$("$BUILD_TOOLS_DIR/aapt2" dump xmltree "$TARGET_APK" --file AndroidManifest.xml | grep -i "android:debuggable" | grep -i "0xffffffff" || true)
+            IS_DEBUGGABLE=$("$AAPT2_BIN" dump xmltree "$TARGET_APK" --file AndroidManifest.xml | grep -i "android:debuggable" | grep -E -i "true|0xffffffff" || true)
             if [ -n "$IS_DEBUGGABLE" ]; then
               echo "::error::Release APK must NOT have android:debuggable=true!"
               exit 1
             fi
             echo "Manifest verification passed: APK is not debuggable."
+          else
+            echo "::warning::aapt2 not found; skipping package name and manifest check."
           fi
 
           # Signature verification
-          if [ -n "$BUILD_TOOLS_DIR" ] && [ -f "$BUILD_TOOLS_DIR/apksigner" ]; then
+          if [ -n "$APKSIGNER_BIN" ]; then
             echo "Verifying APK signature..."
-            "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$TARGET_APK"
-            CERT_INFO=$("$BUILD_TOOLS_DIR/apksigner" verify --print-certs "$TARGET_APK")
+            "$APKSIGNER_BIN" verify --verbose "$TARGET_APK"
+            CERT_INFO=$("$APKSIGNER_BIN" verify --print-certs "$TARGET_APK")
             echo "$CERT_INFO"
 
             RAW_DIGEST=$(echo "$CERT_INFO" | grep -i "SHA-256 digest" | head -n 1 | awk '{print $NF}' | tr -d '[:space:]')
@@ -162,6 +180,9 @@ jobs:
             fi
             echo "cert_sha256=$EXTRACTED_SHA256" >> $GITHUB_OUTPUT
             echo "$EXTRACTED_SHA256" > "$ARTIFACT_DIR/certificate-sha256.txt"
+          else
+            echo "::error::apksigner not found; unable to verify signature!"
+            exit 1
           fi
 
           echo "Calculating SHA-256 checksum..."
@@ -171,9 +192,11 @@ jobs:
 
       - name: Cleanup Decoded Keystore
         if: always()
+        env:
+          KEYSTORE_PATH: ${{ steps.setup_keystore.outputs.keystore_path }}
         run: |
-          if [ -n "${{ steps.setup_keystore.outputs.keystore_path }}" ] && [ -f "${{ steps.setup_keystore.outputs.keystore_path }}" ]; then
-            rm -f "${{ steps.setup_keystore.outputs.keystore_path }}"
+          if [ -n "$KEYSTORE_PATH" ] && [ -f "$KEYSTORE_PATH" ]; then
+            rm -f "$KEYSTORE_PATH"
             echo "Scrubbed decoded keystore from runner temp."
           fi
 
@@ -188,7 +211,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publish GitHub Release (Tags / Manual Release only)
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.publish_release == true || github.event.inputs.publish_release == 'true')) }}
         uses: softprops/action-gh-release@v2
         with:
           name: "Release ${{ github.ref_name }}"
