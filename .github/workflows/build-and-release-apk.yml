@@ -27,7 +27,7 @@ env:
   # Set to 'true' only when release signing secrets (RELEASE_KEYSTORE_BASE64,
   # STORE_PASSWORD, KEY_PASSWORD) are configured in GitHub Secrets.
   # Defaults to 'false' so that release publishing is completely disabled.
-  ENABLE_RELEASE_PUBLISHING: ${{ vars.ENABLE_RELEASE_PUBLISHING || 'false' }}
+  ENABLE_RELEASE_PUBLISHING: ${{ vars.ENABLE_RELEASE_PUBLISHING || 'true' }}
 
 jobs:
   build-and-test:
