@@ -54,6 +54,7 @@ fun ScoreCanvasView(
     panOffsetY: Float,
     onZoomAndPanChange: (Float, Float, Float) -> Unit,
     onCanvasTap: (Float, Float) -> Unit,
+    onSelectSymbolForDrag: (String) -> Unit = {},
     onSymbolDragStarted: () -> Unit = {},
     onSymbolDrag: (Float, Float) -> Unit,
     onSymbolDragFinished: () -> Unit,
@@ -70,6 +71,7 @@ fun ScoreCanvasView(
     val currentActiveCustomSymbol by rememberUpdatedState(activeCustomSymbol)
     val currentOnZoomAndPanChange by rememberUpdatedState(onZoomAndPanChange)
     val currentOnCanvasTap by rememberUpdatedState(onCanvasTap)
+    val currentOnSelectSymbolForDrag by rememberUpdatedState(onSelectSymbolForDrag)
     val currentOnSymbolDragStarted by rememberUpdatedState(onSymbolDragStarted)
     val currentOnSymbolDrag by rememberUpdatedState(onSymbolDrag)
     val currentOnSymbolDragFinished by rememberUpdatedState(onSymbolDragFinished)
@@ -102,7 +104,7 @@ fun ScoreCanvasView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(page.id) {
+                .pointerInput(page.id, containerWidthPx, containerHeightPx, fitScale) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val downPos = down.position
@@ -124,162 +126,164 @@ fun ScoreCanvasView(
                             panOffsetY = currentPanY
                         )
 
-                        // Check if down was on a selected symbol or any symbol on page (taking rotation into account)
-                        val hitSymbol = currentPage.symbols.lastOrNull { sym ->
-                            val (hw, hh) = sym.getVisualBounds(currentPage.lineSpacing)
-                            if (sym.rotation != 0f) {
-                                val dx = (downLogicalX - sym.x).toDouble()
-                                val dy = (downLogicalY - sym.y).toDouble()
-                                val rad = Math.toRadians(-sym.rotation.toDouble())
-                                val cos = Math.cos(rad)
-                                val sin = Math.sin(rad)
-                                val localX = (dx * cos - dy * sin).toFloat()
-                                val localY = (dx * sin + dy * cos).toFloat()
-                                localX in (-hw - 14f)..(hw + 14f) && localY in (-hh - 14f)..(hh + 14f)
-                            } else {
-                                downLogicalX in (sym.x - hw - 14f)..(sym.x + hw + 14f) &&
-                                downLogicalY in (sym.y - hh - 14f)..(sym.y + hh + 14f)
-                            }
-                        }
-
+                        // Check if down was on a symbol using unified, zoom-adaptive hit-testing
+                        val hitSymbol = com.example.editor.ScoreTransformMath.findHitSymbol(
+                            logicalX = downLogicalX,
+                            logicalY = downLogicalY,
+                            symbols = currentPage.symbols,
+                            lineSpacing = currentPage.lineSpacing,
+                            zoomScale = currentZoom,
+                            selectedSymbolIds = currentSelectedSymbolIds
+                        )
 
                         var isTransforming = false
                         var isDragging = false
                         val isSymbolDrag = hitSymbol != null &&
-                                           currentActivePaletteSymbol == null && currentActiveCustomSymbol == null
+                                           currentActivePaletteSymbol == null &&
+                                           currentActiveCustomSymbol == null
 
                         var prevCentroid = downPos
                         var prevDistance = 0f
                         var lastSingleFingerPos = downPos
                         var totalDragDistance = 0f
                         var prevPointerCount = 1
+                        val dragThreshold = if (isSymbolDrag) 6f else 8f
 
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val activePointers = event.changes.filter { it.pressed }
-                            val pointerCount = activePointers.size
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val activePointers = event.changes.filter { it.pressed }
+                                val pointerCount = activePointers.size
 
-                            if (pointerCount == 0) {
-                                // All pointers released
-                                if (!isDragging && !isTransforming && totalDragDistance < 12f) {
-                                    // Clean tap on canvas
-                                    currentOnCanvasTap(downLogicalX, downLogicalY)
-                                } else if (isDragging && isSymbolDrag && !isTransforming) {
-                                    currentOnSymbolDragFinished()
+                                if (pointerCount == 0) {
+                                    // All pointers released
+                                    if (!isDragging && !isTransforming && totalDragDistance < dragThreshold) {
+                                        // Clean tap on canvas
+                                        currentOnCanvasTap(downLogicalX, downLogicalY)
+                                    } else if (isDragging && isSymbolDrag && !isTransforming) {
+                                        currentOnSymbolDragFinished()
+                                    }
+                                    break
                                 }
-                                break
-                            }
 
-                            // Handle transitions between single-finger and multi-finger safely without jumps
-                            if (pointerCount != prevPointerCount) {
+                                // Handle transitions between single-finger and multi-finger safely without jumps
+                                if (pointerCount != prevPointerCount) {
+                                    if (pointerCount >= 2) {
+                                        if (isDragging && isSymbolDrag) {
+                                            currentOnSymbolDragFinished()
+                                        }
+                                        isTransforming = true
+                                        isDragging = false
+                                        val p1 = activePointers[0].position
+                                        val p2 = activePointers[1].position
+                                        prevDistance = (p1 - p2).getDistance()
+                                        prevCentroid = (p1 + p2) / 2f
+                                    } else if (pointerCount == 1) {
+                                        isTransforming = false
+                                        lastSingleFingerPos = activePointers[0].position
+                                    }
+                                    prevPointerCount = pointerCount
+                                    event.changes.forEach { it.consume() }
+                                    continue
+                                }
+
                                 if (pointerCount >= 2) {
+                                    // Two fingers: Smooth pinch-to-zoom and focal-point pan
                                     isTransforming = true
                                     isDragging = false
                                     val p1 = activePointers[0].position
                                     val p2 = activePointers[1].position
-                                    prevDistance = (p1 - p2).getDistance()
-                                    prevCentroid = (p1 + p2) / 2f
-                                } else if (pointerCount == 1) {
-                                    isTransforming = false
-                                    lastSingleFingerPos = activePointers[0].position
-                                }
-                                prevPointerCount = pointerCount
-                                event.changes.forEach { it.consume() }
-                                continue
-                            }
+                                    val currentDistance = (p1 - p2).getDistance()
+                                    val currentCentroid = (p1 + p2) / 2f
 
-                            if (pointerCount >= 2) {
-                                // Two fingers: Smooth pinch-to-zoom and focal-point pan
-                                isTransforming = true
-                                isDragging = false
-                                val p1 = activePointers[0].position
-                                val p2 = activePointers[1].position
-                                val currentDistance = (p1 - p2).getDistance()
-                                val currentCentroid = (p1 + p2) / 2f
+                                    if (prevDistance > 5f && currentDistance > 5f) {
+                                        val zoomFactor = currentDistance / prevDistance
+                                        if (zoomFactor.isFinite() && zoomFactor > 0f) {
+                                            val newZoom = (currentZoom * zoomFactor).coerceIn(
+                                                com.example.editor.ScoreTransformMath.MIN_ZOOM,
+                                                com.example.editor.ScoreTransformMath.MAX_ZOOM
+                                            )
+                                            val panDelta = currentCentroid - prevCentroid
 
-                                if (prevDistance > 5f && currentDistance > 5f) {
-                                    val zoomFactor = currentDistance / prevDistance
-                                    if (zoomFactor.isFinite() && zoomFactor > 0f) {
-                                        val newZoom = (currentZoom * zoomFactor).coerceIn(
-                                            com.example.editor.ScoreTransformMath.MIN_ZOOM,
-                                            com.example.editor.ScoreTransformMath.MAX_ZOOM
-                                        )
-                                        val panDelta = currentCentroid - prevCentroid
+                                            val (anchoredPanX, anchoredPanY) = com.example.editor.ScoreTransformMath.calculateZoomAnchor(
+                                                oldZoom = currentZoom,
+                                                newZoom = newZoom,
+                                                oldPanX = currentPanX,
+                                                oldPanY = currentPanY,
+                                                centroidX = prevCentroid.x,
+                                                centroidY = prevCentroid.y,
+                                                containerWidthPx = containerWidthPx,
+                                                containerHeightPx = containerHeightPx,
+                                                panDeltaX = panDelta.x,
+                                                panDeltaY = panDelta.y
+                                            )
 
-                                        val (anchoredPanX, anchoredPanY) = com.example.editor.ScoreTransformMath.calculateZoomAnchor(
-                                            oldZoom = currentZoom,
-                                            newZoom = newZoom,
-                                            oldPanX = currentPanX,
-                                            oldPanY = currentPanY,
-                                            centroidX = prevCentroid.x,
-                                            centroidY = prevCentroid.y,
-                                            containerWidthPx = containerWidthPx,
-                                            containerHeightPx = containerHeightPx,
-                                            panDeltaX = panDelta.x,
-                                            panDeltaY = panDelta.y
-                                        )
+                                            val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
+                                                panX = anchoredPanX,
+                                                panY = anchoredPanY,
+                                                containerWidthPx = containerWidthPx,
+                                                containerHeightPx = containerHeightPx,
+                                                renderedWidthPx = renderedWidthPx,
+                                                renderedHeightPx = renderedHeightPx,
+                                                zoomScale = newZoom
+                                            )
 
-                                        val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
-                                            panX = anchoredPanX,
-                                            panY = anchoredPanY,
-                                            containerWidthPx = containerWidthPx,
-                                            containerHeightPx = containerHeightPx,
-                                            renderedWidthPx = renderedWidthPx,
-                                            renderedHeightPx = renderedHeightPx,
-                                            zoomScale = newZoom
-                                        )
+                                            currentZoom = newZoom
+                                            currentPanX = clampedX
+                                            currentPanY = clampedY
 
-                                        currentZoom = newZoom
-                                        currentPanX = clampedX
-                                        currentPanY = clampedY
-
-                                        currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
-                                    }
-                                }
-
-                                prevDistance = currentDistance
-                                prevCentroid = currentCentroid
-                                event.changes.forEach { it.consume() }
-                            } else if (pointerCount == 1) {
-                                val change = activePointers[0]
-                                val currentPos = change.position
-                                val dragDelta = currentPos - lastSingleFingerPos
-                                lastSingleFingerPos = currentPos
-                                totalDragDistance += dragDelta.getDistance()
-
-                                if (totalDragDistance > 12f) {
-                                    if (!isDragging) {
-                                        isDragging = true
-                                        if (isSymbolDrag && !isTransforming) {
-                                            if (hitSymbol != null && !currentSelectedSymbolIds.contains(hitSymbol.id)) {
-                                                currentOnCanvasTap(downLogicalX, downLogicalY)
-                                            }
-                                            currentOnSymbolDragStarted()
+                                            currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
                                         }
                                     }
-                                    change.consume()
 
-                                    if (isSymbolDrag && !isTransforming) {
-                                        // Drag symbol in logical score coordinates
-                                        val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
-                                        val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
-                                        currentOnSymbolDrag(deltaLogicalX, deltaLogicalY)
-                                    } else {
-                                        // Pan the canvas
-                                        val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
-                                            panX = currentPanX + dragDelta.x,
-                                            panY = currentPanY + dragDelta.y,
-                                            containerWidthPx = containerWidthPx,
-                                            containerHeightPx = containerHeightPx,
-                                            renderedWidthPx = renderedWidthPx,
-                                            renderedHeightPx = renderedHeightPx,
-                                            zoomScale = currentZoom
-                                        )
-                                        currentPanX = clampedX
-                                        currentPanY = clampedY
-                                        currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                    prevDistance = currentDistance
+                                    prevCentroid = currentCentroid
+                                    event.changes.forEach { it.consume() }
+                                } else if (pointerCount == 1 && !isTransforming) {
+                                    val change = activePointers[0]
+                                    val currentPos = change.position
+                                    val dragDelta = currentPos - lastSingleFingerPos
+                                    lastSingleFingerPos = currentPos
+                                    totalDragDistance += dragDelta.getDistance()
+
+                                    if (totalDragDistance > dragThreshold) {
+                                        if (!isDragging) {
+                                            isDragging = true
+                                            if (isSymbolDrag) {
+                                                if (hitSymbol != null) {
+                                                    currentOnSelectSymbolForDrag(hitSymbol.id)
+                                                }
+                                                currentOnSymbolDragStarted()
+                                            }
+                                        }
+                                        change.consume()
+
+                                        if (isSymbolDrag) {
+                                            // Drag symbol in logical score coordinates
+                                            val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
+                                            val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
+                                            currentOnSymbolDrag(deltaLogicalX, deltaLogicalY)
+                                        } else {
+                                            // Pan the canvas
+                                            val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
+                                                panX = currentPanX + dragDelta.x,
+                                                panY = currentPanY + dragDelta.y,
+                                                containerWidthPx = containerWidthPx,
+                                                containerHeightPx = containerHeightPx,
+                                                renderedWidthPx = renderedWidthPx,
+                                                renderedHeightPx = renderedHeightPx,
+                                                zoomScale = currentZoom
+                                            )
+                                            currentPanX = clampedX
+                                            currentPanY = clampedY
+                                            currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
+                                        }
                                     }
                                 }
+                            }
+                        } finally {
+                            if (isDragging && isSymbolDrag) {
+                                currentOnSymbolDragFinished()
                             }
                         }
                     }

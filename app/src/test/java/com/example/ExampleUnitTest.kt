@@ -485,4 +485,89 @@ class ExampleUnitTest {
         assertEquals(16f, hw, 0.01f)
         assertEquals(22f, hh, 0.01f)
     }
+
+    @Test
+    fun testFindHitSymbol_ProximityAndPrioritization() {
+        val sym1 = ScoreSymbol(id = "sym1", type = SymbolType.NOTE_QUARTER, x = 100f, y = 100f)
+        val sym2 = ScoreSymbol(id = "sym2", type = SymbolType.NOTE_HALF, x = 120f, y = 100f)
+        val symbols = listOf(sym1, sym2)
+
+        // Point closer to sym1
+        val hit1 = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 105f,
+            logicalY = 100f,
+            symbols = symbols,
+            lineSpacing = 16f
+        )
+        assertNotNull(hit1)
+        assertEquals("sym1", hit1?.id)
+
+        // Point closer to sym2
+        val hit2 = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 118f,
+            logicalY = 100f,
+            symbols = symbols,
+            lineSpacing = 16f
+        )
+        assertNotNull(hit2)
+        assertEquals("sym2", hit2?.id)
+
+        // Point far away from any symbol
+        val hitNone = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 300f,
+            logicalY = 300f,
+            symbols = symbols,
+            lineSpacing = 16f
+        )
+        assertTrue(hitNone == null)
+    }
+
+    @Test
+    fun testFindHitSymbol_ZoomAdaptiveTouchTarget() {
+        val sym = ScoreSymbol(id = "note1", type = SymbolType.NOTE_QUARTER, x = 100f, y = 100f)
+        val symbols = listOf(sym)
+
+        // At 0.5 zoom (zoomed out), touch padding expands in logical points
+        // so a touch 35 units away from center still hits the target
+        val hitZoomedOut = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 135f,
+            logicalY = 100f,
+            symbols = symbols,
+            lineSpacing = 16f,
+            zoomScale = 0.5f
+        )
+        assertNotNull(hitZoomedOut)
+        assertEquals("note1", hitZoomedOut?.id)
+    }
+
+    @Test
+    fun testDragAccumulation_MovesAcrossSnapPositions() {
+        val page = ScorePage()
+        val staves = page.generateStaves()
+        val staff = staves[0]
+        val startY = staff.line1Y // Bottom line
+        val initialX = staff.left + 50f
+
+        // Initial candidate position
+        val (initX, initY) = StaffSnapper.calculatePosition(initialX, startY, false, true, staves)
+        assertEquals(startY, initY, 0.01f)
+
+        // Simulate small incremental finger drags (e.g. 1.5 points per frame)
+        // With accumulator tracking, accumulated delta increases on each step
+        var accumulatedDeltaY = 0f
+        val stepDelta = 1.5f
+        var snappedPositions = mutableListOf<Float>()
+
+        for (i in 1..10) {
+            accumulatedDeltaY -= stepDelta // Moving up towards line 2
+            val candidateY = initY + accumulatedDeltaY
+            val (_, snappedY) = StaffSnapper.calculatePosition(initX, candidateY, false, true, staves)
+            snappedPositions.add(snappedY)
+        }
+
+        // As accumulatedDelta reaches -15f (close to -16f line spacing),
+        // the snapped position MUST advance from line1Y to line2Y (or intermediate space)!
+        val finalSnapped = snappedPositions.last()
+        assertTrue("Expected snapped position to move away from line1Y, got $finalSnapped vs start $startY", finalSnapped < startY)
+    }
 }

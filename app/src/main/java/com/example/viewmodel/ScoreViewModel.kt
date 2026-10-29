@@ -353,26 +353,15 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         val page = project.activePage
         val baseSpacing = page.lineSpacing
 
-        // Check if user tapped an existing symbol (taking rotation into account)
-        val hitSymbol = page.symbols.lastOrNull { sym ->
-            val (hw, hh) = sym.getVisualBounds(baseSpacing)
-            if (sym.rotation != 0f) {
-                val dx = (logicalX - sym.x).toDouble()
-                val dy = (logicalY - sym.y).toDouble()
-                val rad = Math.toRadians(-sym.rotation.toDouble())
-                val cos = Math.cos(rad)
-                val sin = Math.sin(rad)
-                val localX = (dx * cos - dy * sin).toFloat()
-                val localY = (dx * sin + dy * cos).toFloat()
-                localX in (-hw - 10f)..(hw + 10f) && localY in (-hh - 10f)..(hh + 10f)
-            } else {
-                val left = sym.x - hw - 8f
-                val right = sym.x + hw + 8f
-                val top = sym.y - hh - 8f
-                val bottom = sym.y + hh + 8f
-                logicalX in left..right && logicalY in top..bottom
-            }
-        }
+        // Check if user tapped an existing symbol (taking rotation and zoom into account)
+        val hitSymbol = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = logicalX,
+            logicalY = logicalY,
+            symbols = page.symbols,
+            lineSpacing = baseSpacing,
+            zoomScale = _uiState.value.zoomScale,
+            selectedSymbolIds = _uiState.value.selectedSymbolIds
+        )
 
 
         if (hitSymbol != null) {
@@ -476,18 +465,55 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- SYMBOL MANIPULATION (DRAG, RESIZE, FLIP STEM, DELETE, DUPLICATE) ---
 
+    // Tracks initial positions of dragged symbols to calculate snapping from the original baseline
+    // rather than accumulating rounding errors on each frame
+    private var dragInitialPositions: Map<String, Pair<Float, Float>>? = null
+    private var accumulatedDragDeltaX: Float = 0f
+    private var accumulatedDragDeltaY: Float = 0f
+
+    fun selectSymbolForDrag(symbolId: String) {
+        val currentSelected = _uiState.value.selectedSymbolIds
+        if (!currentSelected.contains(symbolId)) {
+            _uiState.update { it.copy(selectedSymbolIds = setOf(symbolId)) }
+        }
+    }
+
+    fun onSymbolDragStarted() {
+        val project = _uiState.value.currentProject ?: return
+        recordUndo(project.activePage.symbols)
+        val selectedIds = _uiState.value.selectedSymbolIds
+        dragInitialPositions = project.activePage.symbols
+            .filter { selectedIds.contains(it.id) }
+            .associate { it.id to (it.x to it.y) }
+        accumulatedDragDeltaX = 0f
+        accumulatedDragDeltaY = 0f
+    }
+
     fun onSymbolDrag(deltaX: Float, deltaY: Float) {
         val project = _uiState.value.currentProject ?: return
         val selectedIds = _uiState.value.selectedSymbolIds
         if (selectedIds.isEmpty()) return
 
+        val initialPositions = dragInitialPositions ?: run {
+            val map = project.activePage.symbols
+                .filter { selectedIds.contains(it.id) }
+                .associate { it.id to (it.x to it.y) }
+            dragInitialPositions = map
+            map
+        }
+        if (initialPositions.isEmpty()) return
+
+        accumulatedDragDeltaX += deltaX
+        accumulatedDragDeltaY += deltaY
+
         val page = project.activePage
         val staves = page.generateStaves()
 
         val updatedSymbols = page.symbols.map { sym ->
-            if (selectedIds.contains(sym.id)) {
-                val candidateX = sym.x + deltaX
-                val candidateY = sym.y + deltaY
+            val initPos = initialPositions[sym.id]
+            if (initPos != null) {
+                val candidateX = initPos.first + accumulatedDragDeltaX
+                val candidateY = initPos.second + accumulatedDragDeltaY
 
                 if (sym.type == SymbolType.TEXT_ANNOTATION) {
                     sym.copy(x = candidateX, y = candidateY)
@@ -509,12 +535,10 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         updateActivePageSymbols(updatedSymbols, recordHistory = false)
     }
 
-    fun onSymbolDragStarted() {
-        val project = _uiState.value.currentProject ?: return
-        recordUndo(project.activePage.symbols)
-    }
-
     fun onSymbolDragFinished() {
+        dragInitialPositions = null
+        accumulatedDragDeltaX = 0f
+        accumulatedDragDeltaY = 0f
         triggerAutoSave()
     }
 
