@@ -478,10 +478,16 @@ class ScoreViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onSymbolDragStarted() {
+    fun onSymbolDragStarted(specificSymbolId: String? = null) {
         val project = _uiState.value.currentProject ?: return
         recordUndo(project.activePage.symbols)
-        val selectedIds = _uiState.value.selectedSymbolIds
+        val selectedIds = if (specificSymbolId != null && !_uiState.value.selectedSymbolIds.contains(specificSymbolId)) {
+            val newSet = setOf(specificSymbolId)
+            _uiState.update { it.copy(selectedSymbolIds = newSet) }
+            newSet
+        } else {
+            _uiState.value.selectedSymbolIds
+        }
         dragInitialPositions = project.activePage.symbols
             .filter { selectedIds.contains(it.id) }
             .associate { it.id to (it.x to it.y) }

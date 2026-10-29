@@ -169,7 +169,7 @@ fun ScoreEditorScreen(
                 onZoomAndPanChange = { z, px, py -> viewModel.setZoomAndPan(z, px, py) },
                 onCanvasTap = { lx, ly -> viewModel.onCanvasTap(lx, ly) },
                 onSelectSymbolForDrag = { id -> viewModel.selectSymbolForDrag(id) },
-                onSymbolDragStarted = { viewModel.onSymbolDragStarted() },
+                onSymbolDragStarted = { targetId -> viewModel.onSymbolDragStarted(targetId) },
                 onSymbolDrag = { dx, dy -> viewModel.onSymbolDrag(dx, dy) },
                 onSymbolDragFinished = { viewModel.onSymbolDragFinished() }
             )

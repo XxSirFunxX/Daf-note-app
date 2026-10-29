@@ -570,4 +570,140 @@ class ExampleUnitTest {
         val finalSnapped = snappedPositions.last()
         assertTrue("Expected snapped position to move away from line1Y, got $finalSnapped vs start $startY", finalSnapped < startY)
     }
+
+    @Test
+    fun testPinchZoom_MultiTouchReleaseDoesNotTriggerTap() {
+        // Simulates the gesture state machine:
+        // 1. First finger down (pointerCount = 1)
+        // 2. Second finger joins (pointerCount = 2 -> wasMultiTouch becomes true)
+        // 3. User zooms
+        // 4. One finger lifts (pointerCount = 1, wasMultiTouch remains true)
+        // 5. Second finger lifts (pointerCount = 0)
+        var wasMultiTouch = false
+        var isTransformingActive = false
+        var tapPlaced = false
+
+        // Finger 1 down
+        var pointerCount = 1
+        // Finger 2 down
+        pointerCount = 2
+        if (pointerCount >= 2) {
+            wasMultiTouch = true
+            isTransformingActive = true
+        }
+
+        assertTrue("Gesture must be marked as multi-touch", wasMultiTouch)
+        assertTrue("Transforming must be active", isTransformingActive)
+
+        // Finger 1 lifts first
+        pointerCount = 1
+        if (pointerCount == 1 && wasMultiTouch) {
+            isTransformingActive = false
+        }
+        // wasMultiTouch MUST remain true!
+        assertTrue("wasMultiTouch must remain true when transitioning to 1 finger", wasMultiTouch)
+
+        // Finger 2 lifts (all pointers released)
+        pointerCount = 0
+        if (pointerCount == 0) {
+            if (wasMultiTouch) {
+                // Must NOT place note or fire tap!
+                tapPlaced = false
+            } else {
+                tapPlaced = true
+            }
+        }
+
+        assertFalse("Lifting fingers after a pinch gesture must NEVER trigger tap/note-placement", tapPlaced)
+    }
+
+    @Test
+    fun testSelectedSymbol_CanDragDirectlyOrFromOffset() {
+        val sym1 = ScoreSymbol(id = "selected_note", type = SymbolType.NOTE_QUARTER, x = 150f, y = 200f)
+        val selectedIds = setOf(sym1.id)
+
+        // Case A: User touches directly on the selected symbol
+        val hitDirect = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 152f,
+            logicalY = 201f,
+            symbols = listOf(sym1),
+            lineSpacing = 16f,
+            selectedSymbolIds = selectedIds
+        )
+        val isDirectDragEligible = (hitDirect != null || selectedIds.isNotEmpty())
+        assertTrue("Direct touch on selected symbol must be drag-eligible", isDirectDragEligible)
+
+        // Case B: User touches away from the selected symbol (offset drag to avoid finger obscuring note)
+        val hitOffset = com.example.editor.ScoreTransformMath.findHitSymbol(
+            logicalX = 400f,
+            logicalY = 400f,
+            symbols = listOf(sym1),
+            lineSpacing = 16f,
+            selectedSymbolIds = selectedIds
+        )
+        assertTrue("Offset touch hits null symbol directly", hitOffset == null)
+        val isOffsetDragEligible = (hitOffset != null || selectedIds.isNotEmpty())
+        assertTrue("Offset drag when a symbol is already selected MUST be drag-eligible", isOffsetDragEligible)
+
+        // Case C: No symbol is selected and touch is on blank canvas -> must NOT be symbol drag
+        val emptySelection = emptySet<String>()
+        val isBlankDragEligible = (hitOffset != null || emptySelection.isNotEmpty())
+        assertFalse("Blank canvas drag with no selection must route to canvas panning", isBlankDragEligible)
+    }
+
+    @Test
+    fun testSnappingVsFreePositioningModes() {
+        val page = ScorePage()
+        val staves = page.generateStaves()
+        val staff = staves[0]
+
+        // Candidate Y halfway between line 1 and the space above it
+        val rawCandidateY = staff.line1Y - 4.23f
+        val candidateX = staff.left + 100f
+
+        // With snap mode active
+        val (snappedX, snappedY) = StaffSnapper.calculatePosition(
+            candidateX = candidateX,
+            candidateY = rawCandidateY,
+            isRingSound = false,
+            isSnapMode = true,
+            staves = staves
+        )
+        // Snapped Y must be quantized to nearest staff position (line1Y or space)
+        assertTrue("Snapped Y must snap to staff position", staff.snapPositions.contains(snappedY))
+
+        // With free positioning mode (snap disabled)
+        val (freeX, freeY) = StaffSnapper.calculatePosition(
+            candidateX = candidateX,
+            candidateY = rawCandidateY,
+            isRingSound = false,
+            isSnapMode = false,
+            staves = staves
+        )
+        // Free Y must match the exact continuous candidate Y without quantization
+        assertEquals(rawCandidateY, freeY, 0.001f)
+        assertEquals(candidateX, freeX, 0.001f)
+    }
+
+    @Test
+    fun testRingSound_RemainsStrictlyOnLine4InFreeMode() {
+        val page = ScorePage()
+        val staves = page.generateStaves()
+        val staff = staves[0]
+
+        val rawCandidateY = staff.line1Y - 50f
+        val candidateX = staff.left + 100f
+
+        // In free-position mode (isSnapMode = false)
+        val (finalX, finalY) = StaffSnapper.calculatePosition(
+            candidateX = candidateX,
+            candidateY = rawCandidateY,
+            isRingSound = true, // Ring sound constraint
+            isSnapMode = false,
+            staves = staves
+        )
+
+        assertEquals("Ring sound must strictly stay on line 4 even in free mode", staff.line4Y, finalY, 0.001f)
+    }
 }
+

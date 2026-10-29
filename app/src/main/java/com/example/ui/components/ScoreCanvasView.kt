@@ -55,7 +55,7 @@ fun ScoreCanvasView(
     onZoomAndPanChange: (Float, Float, Float) -> Unit,
     onCanvasTap: (Float, Float) -> Unit,
     onSelectSymbolForDrag: (String) -> Unit = {},
-    onSymbolDragStarted: () -> Unit = {},
+    onSymbolDragStarted: (String?) -> Unit = {},
     onSymbolDrag: (Float, Float) -> Unit,
     onSymbolDragFinished: () -> Unit,
     modifier: Modifier = Modifier
@@ -136,18 +136,20 @@ fun ScoreCanvasView(
                             selectedSymbolIds = currentSelectedSymbolIds
                         )
 
-                        var isTransforming = false
-                        var isDragging = false
-                        val isSymbolDrag = hitSymbol != null &&
-                                           currentActivePaletteSymbol == null &&
-                                           currentActiveCustomSymbol == null
+                        val initialSelectedIds = currentSelectedSymbolIds
+                        val isSymbolDragEligible = (hitSymbol != null || initialSelectedIds.isNotEmpty())
+
+                        var wasMultiTouch = false
+                        var isSymbolDragActive = false
+                        var isCanvasPanActive = false
+                        var isTransformingActive = false
 
                         var prevCentroid = downPos
                         var prevDistance = 0f
                         var lastSingleFingerPos = downPos
                         var totalDragDistance = 0f
                         var prevPointerCount = 1
-                        val dragThreshold = if (isSymbolDrag) 6f else 8f
+                        val dragThreshold = if (isSymbolDragEligible) 6f else 8f
 
                         try {
                             while (true) {
@@ -157,11 +159,16 @@ fun ScoreCanvasView(
 
                                 if (pointerCount == 0) {
                                     // All pointers released
-                                    if (!isDragging && !isTransforming && totalDragDistance < dragThreshold) {
-                                        // Clean tap on canvas
-                                        currentOnCanvasTap(downLogicalX, downLogicalY)
-                                    } else if (isDragging && isSymbolDrag && !isTransforming) {
+                                    if (wasMultiTouch) {
+                                        // Pinch-to-zoom / multi-touch ended. Never place a note or trigger tap on release.
+                                    } else if (isSymbolDragActive) {
                                         currentOnSymbolDragFinished()
+                                        isSymbolDragActive = false
+                                    } else if (isCanvasPanActive) {
+                                        isCanvasPanActive = false
+                                    } else if (totalDragDistance < dragThreshold) {
+                                        // Genuine single-finger tap
+                                        currentOnCanvasTap(downLogicalX, downLogicalY)
                                     }
                                     break
                                 }
@@ -169,17 +176,23 @@ fun ScoreCanvasView(
                                 // Handle transitions between single-finger and multi-finger safely without jumps
                                 if (pointerCount != prevPointerCount) {
                                     if (pointerCount >= 2) {
-                                        if (isDragging && isSymbolDrag) {
+                                        wasMultiTouch = true
+                                        if (isSymbolDragActive) {
                                             currentOnSymbolDragFinished()
+                                            isSymbolDragActive = false
                                         }
-                                        isTransforming = true
-                                        isDragging = false
+                                        isCanvasPanActive = false
+                                        isTransformingActive = true
                                         val p1 = activePointers[0].position
                                         val p2 = activePointers[1].position
                                         prevDistance = (p1 - p2).getDistance()
                                         prevCentroid = (p1 + p2) / 2f
+                                    } else if (pointerCount == 1 && wasMultiTouch) {
+                                        // One finger of multi-touch was lifted. Multi-touch gesture is ending.
+                                        // Do not allow the remaining single finger to drag, pan, or tap.
+                                        isTransformingActive = false
                                     } else if (pointerCount == 1) {
-                                        isTransforming = false
+                                        isTransformingActive = false
                                         lastSingleFingerPos = activePointers[0].position
                                     }
                                     prevPointerCount = pointerCount
@@ -189,8 +202,11 @@ fun ScoreCanvasView(
 
                                 if (pointerCount >= 2) {
                                     // Two fingers: Smooth pinch-to-zoom and focal-point pan
-                                    isTransforming = true
-                                    isDragging = false
+                                    wasMultiTouch = true
+                                    isTransformingActive = true
+                                    isSymbolDragActive = false
+                                    isCanvasPanActive = false
+
                                     val p1 = activePointers[0].position
                                     val p2 = activePointers[1].position
                                     val currentDistance = (p1 - p2).getDistance()
@@ -239,7 +255,7 @@ fun ScoreCanvasView(
                                     prevDistance = currentDistance
                                     prevCentroid = currentCentroid
                                     event.changes.forEach { it.consume() }
-                                } else if (pointerCount == 1 && !isTransforming) {
+                                } else if (pointerCount == 1 && !wasMultiTouch) {
                                     val change = activePointers[0]
                                     val currentPos = change.position
                                     val dragDelta = currentPos - lastSingleFingerPos
@@ -247,23 +263,27 @@ fun ScoreCanvasView(
                                     totalDragDistance += dragDelta.getDistance()
 
                                     if (totalDragDistance > dragThreshold) {
-                                        if (!isDragging) {
-                                            isDragging = true
-                                            if (isSymbolDrag) {
-                                                if (hitSymbol != null) {
+                                        if (!isSymbolDragActive && !isCanvasPanActive) {
+                                            if (isSymbolDragEligible) {
+                                                isSymbolDragActive = true
+                                                if (hitSymbol != null && !initialSelectedIds.contains(hitSymbol.id)) {
                                                     currentOnSelectSymbolForDrag(hitSymbol.id)
+                                                    currentOnSymbolDragStarted(hitSymbol.id)
+                                                } else {
+                                                    currentOnSymbolDragStarted(hitSymbol?.id)
                                                 }
-                                                currentOnSymbolDragStarted()
+                                            } else {
+                                                isCanvasPanActive = true
                                             }
                                         }
                                         change.consume()
 
-                                        if (isSymbolDrag) {
+                                        if (isSymbolDragActive) {
                                             // Drag symbol in logical score coordinates
                                             val deltaLogicalX = (dragDelta.x / (renderedWidthPx * currentZoom)) * pageW
                                             val deltaLogicalY = (dragDelta.y / (renderedHeightPx * currentZoom)) * pageH
                                             currentOnSymbolDrag(deltaLogicalX, deltaLogicalY)
-                                        } else {
+                                        } else if (isCanvasPanActive) {
                                             // Pan the canvas
                                             val (clampedX, clampedY) = com.example.editor.ScoreTransformMath.clampPan(
                                                 panX = currentPanX + dragDelta.x,
@@ -279,10 +299,13 @@ fun ScoreCanvasView(
                                             currentOnZoomAndPanChange(currentZoom, currentPanX, currentPanY)
                                         }
                                     }
+                                } else {
+                                    // pointerCount == 1 but wasMultiTouch is true: consume and ignore
+                                    event.changes.forEach { it.consume() }
                                 }
                             }
                         } finally {
-                            if (isDragging && isSymbolDrag) {
+                            if (isSymbolDragActive) {
                                 currentOnSymbolDragFinished()
                             }
                         }
